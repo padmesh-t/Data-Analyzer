@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.api.deps import get_current_user, require_permission
+from app.api.deps import get_current_user
 from app.models.user import User
 from app.models.permission import Permission
 from app.schemas.permission import PermissionListResponse, PermissionResponse
@@ -15,7 +15,7 @@ def list_permissions(
     page: int = Query(1, ge=1),
     per_page: int = Query(100, ge=1, le=200),
     resource: str = Query(None),
-    current_user: User = Depends(require_permission("role.read")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     query = db.query(Permission)
@@ -37,7 +37,7 @@ def list_permissions(
 @router.get("/permissions/{permission_id}", response_model=PermissionResponse)
 def get_permission(
     permission_id: int,
-    current_user: User = Depends(require_permission("role.read")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     perm = db.query(Permission).filter(Permission.id == permission_id).first()

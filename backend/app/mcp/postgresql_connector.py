@@ -32,7 +32,6 @@ class PostgreSQLConnector:
         }
         if self.ssl:
             params["sslmode"] = "require"
-        params["connect_timeout"] = 10
         return params
 
     def connect(self):

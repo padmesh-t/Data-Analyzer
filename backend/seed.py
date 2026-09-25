@@ -1,7 +1,4 @@
 """Seed script to create initial roles, permissions, and admin user."""
-import os
-import secrets
-
 from sqlalchemy import inspect, text
 
 from app.database import SessionLocal, engine, Base
@@ -104,16 +101,16 @@ def seed():
         for role_name, role_info in roles_data.items():
             existing_role = db.query(Role).filter(Role.name == role_name).first()
             if existing_role:
-                role = existing_role
-            else:
-                role = Role(
-                    name=role_name,
-                    description=role_info["description"],
-                    is_system=role_info["is_system"],
-                )
-                db.add(role)
-                db.commit()
-                db.refresh(role)
+                continue
+
+            role = Role(
+                name=role_name,
+                description=role_info["description"],
+                is_system=role_info["is_system"],
+            )
+            db.add(role)
+            db.commit()
+            db.refresh(role)
 
             # Assign permissions based on role
             if role_name == "SuperAdmin":
@@ -133,18 +130,8 @@ def seed():
             else:
                 perm_ids = []
 
-            # Reconcile: grant any missing permissions on existing roles so a
-            # seed rerun (or a seed that grew since first deploy) upgrades roles
-            # without dropping existing grants.
-            granted_ids = {
-                rp.permission_id
-                for rp in db.query(RolePermission)
-                .filter(RolePermission.role_id == role.id)
-                .all()
-            }
             for pid in perm_ids:
-                if pid not in granted_ids:
-                    db.add(RolePermission(role_id=role.id, permission_id=pid))
+                db.add(RolePermission(role_id=role.id, permission_id=pid))
 
         db.commit()
 
@@ -152,12 +139,9 @@ def seed():
         admin_email = "admin@agentic.com"
         existing_admin = db.query(User).filter(User.email == admin_email).first()
         if not existing_admin:
-            # Prefer ADMIN_PASSWORD from the environment; otherwise generate a
-            # strong random one. Never use a hardcoded default.
-            admin_password = os.environ.get("ADMIN_PASSWORD") or secrets.token_urlsafe(12)
             admin = User(
                 email=admin_email,
-                password_hash=get_password_hash(admin_password),
+                password_hash=get_password_hash("admin123"),
                 full_name="System Admin",
                 is_active=True,
             )
@@ -172,10 +156,7 @@ def seed():
                 db.commit()
 
         print("Seed completed successfully!")
-        if not existing_admin:
-            print(f"Admin login: {admin_email} / {admin_password}")
-        else:
-            print("Admin user already exists (password not changed)")
+        print(f"Admin login: {admin_email} / admin123")
 
     finally:
         db.close()

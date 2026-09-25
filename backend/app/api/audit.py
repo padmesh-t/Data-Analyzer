@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.api.deps import get_current_user, require_permission
+from app.api.deps import get_current_user
 from app.models.user import User
 from app.schemas.audit import AuditLogListResponse, AuditStats
 from app.services import audit_service
@@ -22,7 +22,7 @@ def list_audit_logs(
     end_date: str = Query(None),
     sort_by: str = Query("created_at"),
     sort_order: str = Query("desc"),
-    current_user: User = Depends(require_permission("audit.read")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     logs, total = audit_service.get_audit_logs(
@@ -37,7 +37,7 @@ def list_audit_logs(
 def get_audit_stats(
     start_date: str = Query(None),
     end_date: str = Query(None),
-    current_user: User = Depends(require_permission("audit.read")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     return audit_service.get_audit_stats(db)

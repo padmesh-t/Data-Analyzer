@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.api.deps import get_current_user, require_permission
+from app.api.deps import get_current_user
 from app.models.user import User, UserRole
 from app.schemas.user import UserResponse, UpdateProfileRequest, UserListResponse
 from app.schemas.common import MessageResponse
@@ -38,7 +38,7 @@ def list_users(
     role_id: int = Query(None),
     sort_by: str = Query("created_at"),
     sort_order: str = Query("desc"),
-    current_user: User = Depends(require_permission("user.read")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     users, total = user_service.list_users(
@@ -51,7 +51,7 @@ def list_users(
 @router.get("/users/{user_id}", response_model=UserResponse)
 def get_user(
     user_id: int,
-    current_user: User = Depends(require_permission("user.read")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     user = user_service.get_user_by_id(db, user_id)
@@ -65,7 +65,7 @@ def get_user(
 def update_user(
     user_id: int,
     data: UpdateProfileRequest,
-    current_user: User = Depends(require_permission("user.update")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     return user_service.update_profile(db, user_id, data, current_user.id)
@@ -74,7 +74,7 @@ def update_user(
 @router.delete("/users/{user_id}", response_model=MessageResponse)
 def delete_user(
     user_id: int,
-    current_user: User = Depends(require_permission("user.delete")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     user_service.delete_user(db, user_id, current_user.id)
@@ -84,7 +84,7 @@ def delete_user(
 @router.post("/users/{user_id}/activate", response_model=MessageResponse)
 def activate_user(
     user_id: int,
-    current_user: User = Depends(require_permission("user.update")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     user = user_service.get_user_by_id(db, user_id)
@@ -100,7 +100,7 @@ def activate_user(
 @router.post("/users/{user_id}/deactivate", response_model=MessageResponse)
 def deactivate_user(
     user_id: int,
-    current_user: User = Depends(require_permission("user.update")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     user = user_service.get_user_by_id(db, user_id)
@@ -116,7 +116,7 @@ def deactivate_user(
 @router.get("/users/{user_id}/roles")
 def get_user_roles(
     user_id: int,
-    current_user: User = Depends(require_permission("user.read")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     from app.models.role import Role
@@ -134,7 +134,7 @@ def get_user_roles(
 def assign_role_to_user(
     user_id: int,
     data: dict,
-    current_user: User = Depends(require_permission("access.manage")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     role_id = data.get("role_id")
@@ -161,7 +161,7 @@ def assign_role_to_user(
 def remove_role_from_user(
     user_id: int,
     role_id: int,
-    current_user: User = Depends(require_permission("access.manage")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     ur = db.query(UserRole).filter(

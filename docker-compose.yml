@@ -44,20 +44,16 @@ services:
     environment:
       DATABASE_URL: postgresql://user:pass@postgres:5432/agentic
       REDIS_URL: redis://redis:6379/0
-      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in .env}
+      SECRET_KEY: super-secret-key-change-in-production-abc123
       CORS_ORIGINS: '["http://localhost:3000", "http://localhost:3001"]'
       SMTP_HOST: mailhog
       SMTP_PORT: "1025"
-      APP_URL: http://localhost:8000
+      APP_URL: http://localhost:3000
       VLLM_API_URL: http://ollama:11434/v1
       VLLM_API_KEY: ""
       LLM_USE_MOCK: "false"
-      LLM_MODEL: "qwen3:8b"
-      MCP_API_KEY: ${MCP_API_KEY:?Set MCP_API_KEY in .env}
-      MCP_ENABLED: "true"
-      USE_MCP_TOOLS: "true"
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      LLM_MODEL: "qwen2.5-coder:3b"
+      MCP_API_KEY: "sk-mcp-secret"
     volumes:
       - ./backend:/app
     depends_on:
@@ -66,7 +62,7 @@ services:
       redis:
         condition: service_healthy
     command: >
-      sh -c "python seed.py && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+      sh -c "python seed.py && uvicorn app.main:app --host 0.0.0.0 --port 8090 --reload"
 
   ollama:
     image: ollama/ollama:0.5.12

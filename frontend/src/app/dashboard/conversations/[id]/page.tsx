@@ -1,7 +1,7 @@
 "use client"
 
-import { Suspense, useEffect, useState, useRef, useCallback } from "react"
-import { useParams, useRouter, useSearchParams } from "next/navigation"
+import { useEffect, useState, useRef, useCallback } from "react"
+import { useParams, useRouter } from "next/navigation"
 import { api } from "@/lib/api-client"
 import { useToast } from "@/components/ui/use-toast"
 import { Button } from "@/components/ui/button"
@@ -39,13 +39,11 @@ function extractSql(content: string): string | null {
   return m ? m[1].trim() : null
 }
 
-export function ConversationDetailPage() {
+export default function ConversationDetailPage() {
   const params = useParams()
   const router = useRouter()
-  const searchParams = useSearchParams()
   const { toast } = useToast()
   const conversationId = Number(params.id)
-  const templateQuestion = searchParams.get("question")
 
   const [messages, setMessages] = useState<ConversationMessageResponse[]>([])
   const [title, setTitle] = useState("Conversation")
@@ -104,12 +102,6 @@ export function ConversationDetailPage() {
   }, [conversationId, router, toast])
 
   useEffect(() => { fetchData() }, [fetchData])
-
-  useEffect(() => {
-    if (templateQuestion && !isLoading && messages.length === 0) {
-      setInput(templateQuestion)
-    }
-  }, [templateQuestion, isLoading, messages.length])
 
   const fetchSuggestions = useCallback(async (q: string) => {
     if (q.length < 2) { setShowSuggestions(false); return }
@@ -487,13 +479,5 @@ export function ConversationDetailPage() {
         </DialogContent>
       </Dialog>
     </div>
-  )
-}
-
-export default function ConversationDetailPageWrapper() {
-  return (
-    <Suspense fallback={null}>
-      <ConversationDetailPage />
-    </Suspense>
   )
 }

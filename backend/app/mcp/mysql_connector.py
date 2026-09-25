@@ -28,7 +28,6 @@ class MySQLConnector:
             "user": self.user,
             "password": self.password,
             "charset": "utf8mb4",
-            "connect_timeout": 10,
         }
         if self.ssl:
             params["ssl"] = {"ssl": {}}

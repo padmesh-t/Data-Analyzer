@@ -3,9 +3,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.user import User, UserRole
-from app.models.role import Role, RolePermission
-from app.models.permission import Permission
+from app.models.user import User
 from app.utils.security import decode_token
 
 security = HTTPBearer()
@@ -45,47 +43,3 @@ def get_current_user(
         )
 
     return user
-
-
-def _role_ids(db: Session, user_id: int) -> list[int]:
-    rows = db.query(UserRole.role_id).filter(UserRole.user_id == user_id).all()
-    return [r[0] for r in rows]
-
-
-def user_has_permission(db: Session, user: User, permission: str) -> bool:
-    """Return True if the user (via any of their roles) holds the permission."""
-    return user_has_permission_by_id(db, user.id, permission)
-
-
-def user_has_permission_by_id(db: Session, user_id: int, permission: str) -> bool:
-    """Return True if the user id (via any of their roles) holds the permission."""
-    role_ids = _role_ids(db, user_id)
-    if not role_ids:
-        return False
-    return (
-        db.query(Permission.id)
-        .join(RolePermission, RolePermission.permission_id == Permission.id)
-        .filter(
-            RolePermission.role_id.in_(role_ids),
-            Permission.name == permission,
-        )
-        .first()
-        is not None
-    )
-
-
-def require_permission(permission: str):
-    """Dependency factory: 403 unless the current user holds the permission."""
-
-    def _dep(
-        current_user: User = Depends(get_current_user),
-        db: Session = Depends(get_db),
-    ) -> User:
-        if not user_has_permission(db, current_user, permission):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Insufficient permissions",
-            )
-        return current_user
-
-    return _dep

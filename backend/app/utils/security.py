@@ -9,27 +9,6 @@ from app.config import settings
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
-def _fernet():
-    from cryptography.fernet import Fernet
-
-    return Fernet(settings.ENCRYPTION_KEY.encode())
-
-
-def encrypt_secret(value: str) -> str:
-    """Encrypt a secret (e.g. DB password) for storage at rest."""
-    return _fernet().encrypt(value.encode()).decode()
-
-
-def decrypt_secret(value: str) -> str:
-    """Decrypt a stored secret; returns legacy plaintext values unchanged."""
-    if not value:
-        return value
-    try:
-        return _fernet().decrypt(value.encode()).decode()
-    except Exception:
-        return value
-
-
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 

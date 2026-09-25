@@ -2,7 +2,6 @@ import asyncio
 import hashlib
 import json
 import logging
-from datetime import datetime
 from typing import Any, Callable
 
 from sqlalchemy.orm import Session
@@ -19,22 +18,6 @@ _get_db: Callable[[], Session] | None = None
 def init_poller(get_db_callable: Callable[[], Session]) -> None:
     global _get_db
     _get_db = get_db_callable
-
-
-def _json_safe_cell(val: Any) -> Any:
-    if isinstance(val, (datetime,)):
-        return val.isoformat()
-    if isinstance(val, (bytes, bytearray)):
-        return val.hex()
-    try:
-        json.dumps(val)
-        return val
-    except (TypeError, ValueError):
-        return str(val)
-
-
-def _serialize_rows(rows: list[list[Any]]) -> list[list[Any]]:
-    return [[_json_safe_cell(cell) for cell in row] for row in rows]
 
 
 def _compute_hash(results: dict[str, Any]) -> str:
@@ -55,11 +38,11 @@ def _execute_widget_query(database_id: int, sql: str) -> dict[str, Any] | None:
         )
         if not conn:
             logger.warning("Database %d not found for widget poll", database_id)
-            return {"error": f"Database connection #{database_id} no longer exists"}
+            return None
         connector = get_connector(conn)
         raw = connector.execute_query(sql)
         columns = raw.get("columns", [])
-        rows = _serialize_rows(raw.get("rows", []))
+        rows = raw.get("rows", [])
         return {
             "columns": columns,
             "rows": rows,
@@ -67,7 +50,7 @@ def _execute_widget_query(database_id: int, sql: str) -> dict[str, Any] | None:
         }
     except Exception as e:
         logger.error("Widget poll query failed: %s", e)
-        return {"error": f"Database unreachable: {conn.name if conn else 'connection'} is offline"}
+        return None
     finally:
         db.close()
 
@@ -108,44 +91,26 @@ class WidgetPollManager:
                 interval,
             )
             try:
-                RETRY_INTERVAL = 5  # seconds while DB is down
-                last_ok = False
                 while True:
-                    # Probe immediately (first tick), then every `interval`/`RETRY_INTERVAL`
+                    await asyncio.sleep(interval)
                     results = await asyncio.to_thread(
                         _execute_widget_query, database_id, sql
                     )
                     if results is None:
-                        pass
-                    elif results.get("error"):
-                        # Clear hash so next success always re-broadcasts
-                        # (fixes identical-data non-recovery).
-                        self._hashes.pop(key, None)
-                        if self._broadcast_cb:
-                            await self._broadcast_cb(
-                                dashboard_id,
-                                {
-                                    "type": "widget_error",
-                                    "widget_id": widget_id,
-                                    "error": results["error"],
-                                },
-                            )
-                        last_ok = False
-                    else:
-                        new_hash = _compute_hash(results)
-                        if self._hashes.get(key) != new_hash:
-                            self._hashes[key] = new_hash
-                            if self._broadcast_cb:
-                                await self._broadcast_cb(
-                                    dashboard_id,
-                                    {
-                                        "type": "widget_update",
-                                        "widget_id": widget_id,
-                                        "results": results,
-                                    },
-                                )
-                        last_ok = True
-                    await asyncio.sleep(interval if last_ok else RETRY_INTERVAL)
+                        continue
+                    new_hash = _compute_hash(results)
+                    if self._hashes.get(key) == new_hash:
+                        continue
+                    self._hashes[key] = new_hash
+                    if self._broadcast_cb:
+                        await self._broadcast_cb(
+                            dashboard_id,
+                            {
+                                "type": "widget_update",
+                                "widget_id": widget_id,
+                                "results": results,
+                            },
+                        )
             except asyncio.CancelledError:
                 logger.info(
                     "Poll cancelled: dashboard=%d widget=%d",

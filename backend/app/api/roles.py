@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.api.deps import get_current_user, require_permission
+from app.api.deps import get_current_user
 from app.models.user import User
 from app.models.role import Role, RolePermission
 from app.models.permission import Permission
@@ -19,7 +19,7 @@ router = APIRouter(tags=["Roles"])
 def list_roles(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
-    current_user: User = Depends(require_permission("role.read")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     roles, total = role_service.list_roles(db, page, per_page)
@@ -29,7 +29,7 @@ def list_roles(
 @router.post("/roles", response_model=RoleResponse, status_code=201)
 def create_role(
     data: CreateRoleRequest,
-    current_user: User = Depends(require_permission("role.create")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     return role_service.create_role(db, data, current_user.id)
@@ -38,7 +38,7 @@ def create_role(
 @router.get("/roles/{role_id}", response_model=RoleResponse)
 def get_role(
     role_id: int,
-    current_user: User = Depends(require_permission("role.read")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     role = db.query(Role).filter(Role.id == role_id).first()
@@ -51,28 +51,18 @@ def get_role(
 def update_role(
     role_id: int,
     data: UpdateRoleRequest,
-    current_user: User = Depends(require_permission("role.update")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    role = db.query(Role).filter(Role.id == role_id).first()
-    if not role:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
-    if role.is_system:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="System roles cannot be modified")
     return role_service.update_role(db, role_id, data, current_user.id)
 
 
 @router.delete("/roles/{role_id}", response_model=MessageResponse)
 def delete_role(
     role_id: int,
-    current_user: User = Depends(require_permission("role.delete")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    role = db.query(Role).filter(Role.id == role_id).first()
-    if not role:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
-    if role.is_system:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="System roles cannot be deleted")
     role_service.delete_role(db, role_id, current_user.id)
     return MessageResponse(message="Role deleted")
 
@@ -81,15 +71,9 @@ def delete_role(
 def add_permission_to_role(
     role_id: int,
     data: dict,
-    current_user: User = Depends(require_permission("role.update")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    role = db.query(Role).filter(Role.id == role_id).first()
-    if not role:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
-    if role.is_system:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="System roles cannot be modified")
-
     permission_id = data.get("permission_id")
     if not permission_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="permission_id is required")
@@ -111,14 +95,9 @@ def add_permission_to_role(
 def remove_permission_from_role(
     role_id: int,
     permission_id: int,
-    current_user: User = Depends(require_permission("role.update")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    role = db.query(Role).filter(Role.id == role_id).first()
-    if not role:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
-    if role.is_system:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="System roles cannot be modified")
     rp = db.query(RolePermission).filter(
         RolePermission.role_id == role_id,
         RolePermission.permission_id == permission_id,

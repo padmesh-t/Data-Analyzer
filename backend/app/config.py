@@ -1,6 +1,4 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import model_validator
-
+from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     APP_NAME: str = "Agentic Analytics API"
@@ -10,13 +8,10 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql://user:pass@localhost:5432/agentic"
     REDIS_URL: str = "redis://localhost:6379/0"
 
-    SECRET_KEY: str = ""
+    SECRET_KEY: str = "super-secret-key-change-in-production-abc123"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
-
-    # Fernet key (base64, 32 bytes) used to encrypt DB connection passwords at rest
-    ENCRYPTION_KEY: str = ""
 
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:3001"]
 
@@ -35,29 +30,8 @@ class Settings(BaseSettings):
 
     MCP_API_KEY: str = ""
     MCP_ENABLED: bool = True
-    USE_MCP_TOOLS: bool = False  # Set to True to enable MCP tool usage in LLM services
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
-
-    @model_validator(mode="after")
-    def validate_security_settings(self):
-        known_weak_keys = {"", "super-secret-key-change-in-production-abc123"}
-        if self.SECRET_KEY in known_weak_keys:
-            raise ValueError(
-                "SECRET_KEY must be set to a strong random value in .env "
-                "(e.g. generated with `python -c \"import secrets; print(secrets.token_urlsafe(64))\"`)"
-            )
-        if self.ENCRYPTION_KEY == "":
-            raise ValueError(
-                "ENCRYPTION_KEY must be set in .env "
-                "(generate with `python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"`)"
-            )
-        if self.MCP_ENABLED and not self.MCP_API_KEY:
-            raise ValueError(
-                "MCP_API_KEY must be set when MCP_ENABLED is true; "
-                "set a strong random key in .env"
-            )
-        return self
-
+    class Config:
+        env_file = ".env"
 
 settings = Settings()

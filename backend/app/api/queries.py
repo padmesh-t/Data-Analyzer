@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.api.deps import get_current_user, require_permission
+from app.api.deps import get_current_user
 from app.models.user import User
 from app.schemas.query import (
     QueryRequest, SQLExecutionRequest, FollowUpRequest,
@@ -22,7 +22,7 @@ def list_queries(
     per_page: int = Query(20, ge=1, le=100),
     database_id: int = Query(None),
     status: str = Query(None, pattern=r"^(pending|executing|completed|failed|cancelled)$"),
-    current_user: User = Depends(require_permission("query.read")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     queries, total, pages = query_service.list_queries(
@@ -34,7 +34,7 @@ def list_queries(
 @router.post("", response_model=QueryResponse)
 def execute_query(
     data: QueryRequest,
-    current_user: User = Depends(require_permission("query.execute")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     result = query_service.execute_natural_language_query(db, data, current_user.id)
@@ -45,19 +45,10 @@ def execute_query(
     return result
 
 
-@router.get("/suggestions", response_model=list[str])
-def query_suggestions(
-    q: str = Query("", min_length=1, max_length=200),
-    current_user: User = Depends(require_permission("query.read")),
-    db: Session = Depends(get_db),
-):
-    return query_service.get_suggestions(db, current_user.id, q)
-
-
 @router.get("/{query_id}", response_model=QueryResponse)
 def get_query(
     query_id: int,
-    current_user: User = Depends(require_permission("query.read")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     return query_service.get_query(db, query_id, current_user.id)
@@ -66,7 +57,7 @@ def get_query(
 @router.post("/sql", response_model=QueryResponse)
 def execute_sql(
     data: SQLExecutionRequest,
-    current_user: User = Depends(require_permission("query.execute")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     result = query_service.execute_raw_sql(db, data, current_user.id)
@@ -80,7 +71,7 @@ def execute_sql(
 @router.post("/{query_id}/cancel", response_model=MessageResponse)
 def cancel_query(
     query_id: int,
-    current_user: User = Depends(require_permission("query.execute")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     cancelled = query_service.cancel_query(db, query_id, current_user.id)
@@ -94,7 +85,7 @@ def cancel_query(
 def query_follow_up(
     query_id: int,
     data: FollowUpRequest,
-    current_user: User = Depends(require_permission("query.execute")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     result = query_service.follow_up_query(db, query_id, data, current_user.id)
@@ -108,7 +99,7 @@ def query_follow_up(
 @router.get("/{query_id}/explain", response_model=ExplainResponse)
 def explain_query(
     query_id: int,
-    current_user: User = Depends(require_permission("query.read")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     return query_service.explain_query(db, query_id, current_user.id)
@@ -117,7 +108,7 @@ def explain_query(
 @router.post("/{query_id}/optimize", response_model=OptimizeResponse)
 def optimize_query(
     query_id: int,
-    current_user: User = Depends(require_permission("query.read")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     return query_service.optimize_query(db, query_id, current_user.id)
@@ -126,7 +117,16 @@ def optimize_query(
 @router.post("/{query_id}/visualize", response_model=VisualizeResponse)
 def visualize_query(
     query_id: int,
-    current_user: User = Depends(require_permission("query.read")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     return query_service.visualize_query(db, query_id, current_user.id)
+
+
+@router.get("/suggestions", response_model=list[str])
+def query_suggestions(
+    q: str = Query("", min_length=1, max_length=200),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return query_service.get_suggestions(db, current_user.id, q)

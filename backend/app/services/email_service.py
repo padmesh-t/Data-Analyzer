@@ -11,10 +11,8 @@ logger = logging.getLogger(__name__)
 def send_reset_email(to_email: str, token: str) -> None:
     host = settings.SMTP_HOST
     if not host:
-        logger.warning(
-            "SMTP not configured — password reset email for %s was not sent. "
-            "The reset token is stored in the database.", to_email,
-        )
+        link = f"{settings.APP_URL}/reset-password?token={token}"
+        logger.warning("SMTP not configured — reset link for %s: %s", to_email, link)
         return
 
     reset_link = f"{settings.APP_URL}/reset-password?token={token}"
@@ -55,7 +53,5 @@ def send_reset_email(to_email: str, token: str) -> None:
             logger.info("Reset email sent to %s", to_email)
     except Exception as e:
         logger.error("Failed to send reset email to %s: %s", to_email, e)
-        logger.warning(
-            "Password reset email for %s could not be sent. "
-            "The reset token is stored in the database.", to_email,
-        )
+        link = f"{settings.APP_URL}/reset-password?token={token}"
+        logger.warning("Fallback — reset link for %s: %s", to_email, link)

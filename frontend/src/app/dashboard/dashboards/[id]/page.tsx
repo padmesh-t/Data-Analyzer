@@ -30,7 +30,7 @@ import type {
 import {
   AlertCircle, ArrowLeft, Download, Plus, Trash2, Loader2, Settings, GripVertical, Pencil,
   BarChart3, PieChart, LineChart, AreaChart, Table2, LayoutDashboard,
-  RefreshCw, Wifi, WifiOff, ServerOff,
+  RefreshCw, Wifi, WifiOff,
 } from "lucide-react"
 
 const WIDGET_TYPES = [
@@ -64,69 +64,6 @@ export default function DashboardDetailPage() {
   const lastSavedLayoutRef = useRef<string>("")
 
   const { connected, liveData, activePollers, refreshWidget, refreshAll } = useDashboardWs(dashboardId)
-
-  // are offline (so we can show a banner + per-widget "no signal" state).
-  const queryDbMapRef = useRef<Map<number, number>>(new Map())
-  const [dbDownIds, setDbDownIds] = useState<Set<number>>(new Set())
-  const [dbNameMap, setDbNameMap] = useState<Map<number, string>>(new Map())
-
-  // Per-widget reported DB-down state, so a database being offline is shared
-  // across EVERY widget that uses it (not just the one whose poll errored).
-  // A widget also reports whether it has LIVE results — this allows recovery
-  // to work: as soon as any widget proves the DB is reachable (hasLive=true),
-  // the shared down set clears for that DB, so all siblings render data again.
-  const widgetStateRef = useRef<Map<number, { dbId: number | undefined; down: boolean; hasLive: boolean }>>(new Map())
-
-  useEffect(() => {
-    api.listDatabases({ per_page: 100 })
-      .then((data) => {
-        const m = new Map<number, string>()
-        data.connections.forEach((c) => m.set(c.id, c.name))
-        setDbNameMap(m)
-      })
-      .catch(() => {})
-  }, [])
-
-  // Build the widget -> database map whenever the dashboard loads. The actual
-  // "database offline" detection is reported per-widget by WidgetContent via
-  // onDbState (it sees both live WS errors and the stored query's failure),
-  // so the banner state stays in sync with what each widget actually shows.
-  useEffect(() => {
-    if (!dash) return
-    const map = new Map<number, number>()
-    dash.widgets.forEach((w) => {
-      const cfg = w.config as Record<string, unknown> | undefined
-      const dbId = cfg?.database_id as number | undefined
-      if (dbId) map.set(w.id, dbId)
-    })
-    queryDbMapRef.current = map
-  }, [dash])
-
-  const handleDbState = useCallback(
-    (widgetId: number, dbId: number | undefined, down: boolean, hasLive: boolean) => {
-      const states = widgetStateRef.current
-      states.set(widgetId, { dbId, down, hasLive })
-
-      // A database is considered down only when at least one widget on it
-      // reports down AND NO widget on it has live results. Having live
-      // results proves the DB is reachable right now, so a recovering widget
-      // immediately clears the DB for all siblings.
-      const perDb: Record<number, { down: number; hasLive: boolean }> = {}
-      for (const s of states.values()) {
-        if (s.dbId == null) continue
-        const entry = perDb[s.dbId] || { down: 0, hasLive: false }
-        if (s.down) entry.down++
-        if (s.hasLive) entry.hasLive = true
-        perDb[s.dbId] = entry
-      }
-      const next = new Set<number>()
-      for (const [dbId, state] of Object.entries(perDb)) {
-        if (state.down > 0 && !state.hasLive) next.add(Number(dbId))
-      }
-      setDbDownIds(next)
-    },
-    [],
-  )
 
   const fetchDashboard = useCallback(async () => {
     setIsLoading(true)
@@ -382,24 +319,6 @@ export default function DashboardDetailPage() {
         </div>
       </div>
 
-      {dbDownIds.size > 0 && (
-        <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40 px-4 py-3 mb-4">
-          <ServerOff className="h-5 w-5 text-amber-500 mt-0.5 shrink-0" />
-          <div className="text-sm">
-            <p className="font-medium text-amber-700 dark:text-amber-300">
-              No signal from {dbDownIds.size === 1 ? "a database" : `${dbDownIds.size} databases`}
-            </p>
-            <p className="text-amber-600 dark:text-amber-400/90">
-              {Array.from(dbDownIds)
-                .map((id) => dbNameMap.get(id) || `Database #${id}`)
-                .join(", ")}{" "}
-              {dbDownIds.size === 1 ? "is" : "are"} offline or unreachable. Affected widgets show
-              “No database signal” and will refresh automatically when the connection is restored.
-            </p>
-          </div>
-        </div>
-      )}
-
       {dash.widgets.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-20">
@@ -479,15 +398,7 @@ export default function DashboardDetailPage() {
                   </div>
                 </CardHeader>
                 <CardContent className="p-4 pt-0" style={{ height: `calc(100% - 40px)` }}>
-                  <WidgetContent
-                    widget={widget}
-                    liveData={liveData.get(widget.id)}
-                    widgetId={widget.id}
-                    dbId={queryDbMapRef.current.get(widget.id)}
-                    dbDown={dbDownIds.has(queryDbMapRef.current.get(widget.id) ?? -1)}
-                    dbName={dbNameMap.get(queryDbMapRef.current.get(widget.id) ?? -1)}
-                    onDbState={handleDbState}
-                  />
+                  <WidgetContent widget={widget} liveData={liveData.get(widget.id)} />
                 </CardContent>
               </Card>
             ))}
@@ -585,57 +496,10 @@ function WidgetPlaceholder({ widget }: { widget: WidgetResponse }) {
   )
 }
 
-function isDbUnreachableError(message?: string | null): boolean {
-  if (!message) return false
-  const m = message.toLowerCase()
-  return (
-    m.includes("unreachable") ||
-    m.includes("offline") ||
-    m.includes("timed out") ||
-    m.includes("timeout") ||
-    m.includes("could not connect") ||
-    m.includes("connection refused") ||
-    m.includes("no route") ||
-    m.includes("name or service not known") ||
-    m.includes("getaddrinfo")
-  )
-}
-
-function WidgetDbOffline({ dbName }: { dbName?: string }) {
-  return (
-    <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-4 text-center">
-      <ServerOff className="h-6 w-6 text-amber-500" />
-      <p className="text-sm font-medium text-amber-600 dark:text-amber-400">No database signal</p>
-      <p className="text-xs text-muted-foreground max-w-[220px] line-clamp-3">
-        {dbName ? `“${dbName}” is offline or unreachable.` : "The source database is offline or unreachable."}
-        {" "}This widget will refresh automatically when the connection is restored.
-      </p>
-    </div>
-  )
-}
-
-function WidgetContent({
-  widget, liveData, widgetId, dbId, dbDown, dbName, onDbState,
-}: {
-  widget: WidgetResponse
-  liveData?: LiveWidgetData
-  widgetId: number
-  dbId?: number
-  dbDown?: boolean
-  dbName?: string
-  onDbState?: (widgetId: number, dbId: number | undefined, down: boolean, hasLive: boolean) => void
-}) {
+function WidgetContent({ widget, liveData }: { widget: WidgetResponse; liveData?: LiveWidgetData }) {
   const [query, setQuery] = useState<QueryResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  const liveDbDown = !!liveData?.error && isDbUnreachableError(liveData.error)
-  const ownDown = liveDbDown || (query?.status === "failed" && isDbUnreachableError(query.error_message))
-  const hasLive = !!liveData?.results
-  // The database is treated as down if this widget's own live query errored
-  // OR any sibling widget on the same database reported it down. This is
-  // what makes every widget on an offline DB show "no signal" together.
-  const dbIsDown = ownDown || !!dbDown
 
   useEffect(() => {
     if (!widget.query_id) {
@@ -656,22 +520,9 @@ function WidgetContent({
       .finally(() => setLoading(false))
   }, [widget.query_id, liveData])
 
-  // Report DB-down/up state upward so the dashboard can show a banner and
-  // propagate the down state to sibling widgets sharing the same database.
-  // Resolving a widget to "up" (hasLive=true) clears the shared down set
-  // for its database, letting all siblings recover immediately.
-  useEffect(() => {
-    onDbState?.(widgetId, dbId, ownDown, hasLive)
-  }, [ownDown, hasLive, widgetId, dbId, onDbState])
-
   if (!widget.query_id) return <WidgetPlaceholder widget={widget} />
 
-  // When the database is down, always show the offline state — never fall
-  // back to stale cached results from a previous successful run.
-  if (dbIsDown) return <WidgetDbOffline dbName={dbName} />
-
   if (liveData) {
-    if (liveDbDown || !liveData.results) return <WidgetDbOffline dbName={dbName} />
     return <WidgetChartRenderer widget={widget} results={liveData.results} />
   }
 
@@ -680,15 +531,12 @@ function WidgetContent({
       <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
     </div>
   )
-  if (query?.status === "failed" && isDbUnreachableError(query.error_message)) {
-    return <WidgetDbOffline dbName={dbName} />
-  }
   if (error || !query?.results) {
     return (
       <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-4">
         <AlertCircle className="h-6 w-6 text-destructive" />
         <p className="text-sm text-destructive font-medium">Query Error</p>
-        <p className="text-xs text-muted-foreground text-center max-w-[200px] line-clamp-3">{error || query?.error_message || "Query returned no results"}</p>
+        <p className="text-xs text-muted-foreground text-center max-w-[200px] line-clamp-3">{error || "Query returned no results"}</p>
       </div>
     )
   }

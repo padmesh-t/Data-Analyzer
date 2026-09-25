@@ -7,7 +7,6 @@ from typing import Optional
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import desc
 
 from app.models.connection import DatabaseConnection
 from app.models.query import Query
@@ -19,12 +18,8 @@ from app.schemas.query import (
     ExplainResponse, OptimizeResponse, OptimizeSuggestion,
     VisualizeResponse,
 )
-from app.schemas.conversation import MessageResponse
-from app.services.llm_service import llm_service
-from app.services.mcp_client import mcp_client
 from app.services.connection_service import get_connector, get_database
-from app.api.deps import user_has_permission_by_id
-from app.config import settings
+from app.services.llm_service import llm_service
 from app.utils.error_messages import friendly_error
 
 
@@ -548,123 +543,11 @@ def execute_natural_language_query(
     db: Session,
     data: QueryRequest,
     user_id: int,
-    include_all: Optional[bool] = None,
-    use_mcp_tools: Optional[bool] = None,
 ) -> QueryResponse:
-    if include_all is None:
-        include_all = user_has_permission_by_id(db, user_id, "access.manage")
-    db_conn = get_database(
-        db, data.database_id, user_id=user_id, include_all=include_all,
-    )
+    db_conn = get_database(db, data.database_id)
     if not db_conn:
         raise HTTPException(status_code=404, detail="Database not found")
 
-<<<<<<< HEAD
-    # Check if we should use MCP tools
-    if use_mcp_tools is None:
-        use_mcp_tools = getattr(settings, 'USE_MCP_TOOLS', False)
-    
-    if use_mcp_tools:
-        try:
-            # Use MCP query_data tool which handles NL->SQL and execution
-            import httpx
-            
-            # Prepare MCP request
-            mcp_payload = {
-                "jsonrpc": "2.0",
-                "method": "tools/call",
-                "params": {
-                    "name": "query_data",
-                    "arguments": {
-                        "database_id": data.database_id,
-                        "question": data.natural_language
-                    }
-                },
-                "id": 1
-            }
-            
-            headers = {
-                "Content-Type": "application/json",
-                "Accept": "application/json, text/event-stream"
-            }
-            
-            if settings.MCP_API_KEY:
-                headers["X-API-Key"] = settings.MCP_API_KEY
-            
-            # Make HTTP request to MCP server
-            with httpx.Client(timeout=30.0) as client:
-                mcp_response = client.post(
-                    f"{settings.APP_URL}/mcp",
-                    json=mcp_payload,
-                    headers=headers
-                )
-                mcp_response.raise_for_status()
-                
-                mcp_result = mcp_response.json()
-                
-                if "error" in mcp_result:
-                    raise Exception(f"MCP error: {mcp_result['error']}")
-                
-                result_data = mcp_result.get("result", {})
-                
-                # Extract information from MCP response
-                explanation = result_data.get("text", "Query executed successfully via MCP.")
-                sql = result_data.get("sql", "")
-                
-                # Create query record
-                query_record = Query(
-                    user_id=user_id,
-                    database_id=data.database_id,
-                    natural_language=data.natural_language,
-                    generated_sql=sql,
-                    explanation=explanation,
-                    status="completed",
-                    tokens_used=len(data.natural_language.split()) * 3 + len(sql.split()) * 2,
-                    conversation_id=data.conversation_id,
-                )
-                
-                # Handle results if present in structured format
-                if "structuredContent" in result_data and result_data["structuredContent"]:
-                    structured = result_data["structuredContent"]
-                    if isinstance(structured, dict) and "rows" in structured:
-                        columns = structured.get("columnNames", [])
-                        rows = structured.get("rows", [])
-                        
-                        query_record.result_columns = columns
-                        query_record.result_rows = rows[:1000]
-                        query_record.row_count = len(rows)
-                        query_record.execution_time_ms = 0
-                        
-                        db.add(query_record)
-                        db.commit()
-                        db.refresh(query_record)
-                        
-                        # Add visualization suggestions before returning
-                        result = _db_conn_to_query_response(query_record)
-                        result.suggested_visualizations = _get_visualization_suggestions(query_record)
-                        return result
-                
-                # If we couldn't process structured results, create minimal record
-                query_record.result_columns = []
-                query_record.result_rows = []
-                query_record.row_count = 0
-                
-                db.add(query_record)
-                db.commit()
-                db.refresh(query_record)
-                
-                # Add visualization suggestions before returning
-                result = _db_conn_to_query_response(query_record)
-                result.suggested_visualizations = _get_visualization_suggestions(query_record)
-                return result
-                
-        except Exception as e:
-            # Fall back to traditional approach if MCP fails
-            pass
-    
-    # Traditional approach (original implementation)
-    schema_context = _get_schema_context(db_conn)
-=======
     schema_context, table_cols, schema_metadata = _get_schema_context(db_conn)
     dialect = llm_service._get_db_dialect(db_conn.connection_type)
 
@@ -696,7 +579,6 @@ def execute_natural_language_query(
     if dynamic_guidance:
         prompt_nl += "\n\n" + dynamic_guidance
 
->>>>>>> origin/main
     sql, explanation, tokens_used = llm_service.generate_sql(
         prompt_nl, schema_context, db_conn.connection_type,
     )
@@ -853,10 +735,7 @@ def execute_raw_sql(
     data: SQLExecutionRequest,
     user_id: int,
 ) -> QueryResponse:
-    db_conn = get_database(
-        db, data.database_id, user_id=user_id,
-        include_all=user_has_permission_by_id(db, user_id, "access.manage"),
-    )
+    db_conn = get_database(db, data.database_id)
     if not db_conn:
         raise HTTPException(status_code=404, detail="Database not found")
 
