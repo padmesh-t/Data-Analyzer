@@ -14,19 +14,38 @@ def get_user_by_id(db: Session, user_id: int) -> Optional[User]:
 
 
 def get_user_response(db: Session, user: User) -> UserResponse:
+    from app.models.role import RolePermission
+    from app.models.permission import Permission
+    from app.schemas.permission import PermissionResponse
+
     user_roles = (
         db.query(Role)
         .join(UserRole, Role.id == UserRole.role_id)
         .filter(UserRole.user_id == user.id)
         .all()
     )
-    roles = [
-        RoleInUser(
-            id=r.id, name=r.name, description=r.description,
-            is_system=r.is_system, created_at=r.created_at, updated_at=r.updated_at,
+    roles = []
+    for r in user_roles:
+        perms = (
+            db.query(Permission)
+            .join(RolePermission, Permission.id == RolePermission.permission_id)
+            .filter(RolePermission.role_id == r.id)
+            .all()
         )
-        for r in user_roles
-    ]
+        roles.append(
+            RoleInUser(
+                id=r.id, name=r.name, description=r.description,
+                is_system=r.is_system,
+                permissions=[
+                    PermissionResponse(
+                        id=p.id, name=p.name, resource=p.resource,
+                        action=p.action, description=p.description, created_at=p.created_at,
+                    )
+                    for p in perms
+                ],
+                created_at=r.created_at, updated_at=r.updated_at,
+            )
+        )
     company_name = None
     if user.company_id:
         from app.models.company import Company

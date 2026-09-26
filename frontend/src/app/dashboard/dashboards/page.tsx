@@ -33,12 +33,16 @@ export default function DashboardsPage() {
 
   const canCreateDashboard = useMemo(() => {
     if (!user) return false
+    const roleNames = user.roles?.map((r) => r.name) || []
+    if (roleNames.some((n) => n === "SuperAdmin" || n === "Admin" || n === "Analyst")) return true
     const allPermissions = new Set(user.roles?.flatMap((r) => r.permissions?.map((p) => p.name) || []) || [])
     return allPermissions.has("dashboard.create") || allPermissions.has("access.manage")
   }, [user])
 
   const canDeleteDashboard = useMemo(() => {
     if (!user) return false
+    const roleNames = user.roles?.map((r) => r.name) || []
+    if (roleNames.some((n) => n === "SuperAdmin" || n === "Admin" || n === "Analyst")) return true
     const allPermissions = new Set(user.roles?.flatMap((r) => r.permissions?.map((p) => p.name) || []) || [])
     return allPermissions.has("dashboard.delete") || allPermissions.has("access.manage")
   }, [user])

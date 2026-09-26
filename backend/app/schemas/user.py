@@ -2,12 +2,15 @@ from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 from datetime import datetime
 
+from app.schemas.permission import PermissionResponse
+
 
 class RoleInUser(BaseModel):
     id: int
     name: str
     description: Optional[str] = None
     is_system: bool
+    permissions: List[PermissionResponse] = []
     created_at: datetime
     updated_at: Optional[datetime] = None
 

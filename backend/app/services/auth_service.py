@@ -174,10 +174,10 @@ def reset_password(db: Session, data: ResetPasswordRequest):
 
 def build_token_response(db: Session, user: User):
     from app.schemas.user import UserResponse, RoleInUser
-
-    # Get user roles
+    from app.schemas.permission import PermissionResponse
     from app.models.user import UserRole
-    from app.models.role import Role
+    from app.models.role import Role, RolePermission
+    from app.models.permission import Permission
 
     user_roles = (
         db.query(Role)
@@ -186,13 +186,28 @@ def build_token_response(db: Session, user: User):
         .all()
     )
 
-    roles = [
-        RoleInUser(
-            id=r.id, name=r.name, description=r.description,
-            is_system=r.is_system, created_at=r.created_at, updated_at=r.updated_at,
+    roles = []
+    for r in user_roles:
+        perms = (
+            db.query(Permission)
+            .join(RolePermission, Permission.id == RolePermission.permission_id)
+            .filter(RolePermission.role_id == r.id)
+            .all()
         )
-        for r in user_roles
-    ]
+        roles.append(
+            RoleInUser(
+                id=r.id, name=r.name, description=r.description,
+                is_system=r.is_system,
+                permissions=[
+                    PermissionResponse(
+                        id=p.id, name=p.name, resource=p.resource,
+                        action=p.action, description=p.description, created_at=p.created_at,
+                    )
+                    for p in perms
+                ],
+                created_at=r.created_at, updated_at=r.updated_at,
+            )
+        )
 
     company_name = None
     if user.company_id:
