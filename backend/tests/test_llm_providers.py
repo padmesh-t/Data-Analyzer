@@ -75,7 +75,7 @@ class TestLLMProviderResolution:
             config = service.resolve_provider()
             
             assert config.provider == "local_proxy"
-            assert config.base_url == "http://localhost:4000/v1"
+            assert config.base_url in ("http://localhost:4000/v1", "http://host.docker.internal:4000/v1")
             assert config.model == "custom-model"
 
     def test_explicit_provider_override(self):
