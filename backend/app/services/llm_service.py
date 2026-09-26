@@ -140,10 +140,18 @@ class LLMService:
         # 3. Local Proxy / Custom OpenAI-compatible proxy (LiteLLM, LocalAI, LM Studio, etc.)
         proxy_url = getattr(settings, "LOCAL_PROXY_URL", "").strip()
         if proxy_url:
+            raw_proxy = proxy_url
+            if "localhost" in raw_proxy or "127.0.0.1" in raw_proxy:
+                import socket
+                try:
+                    socket.gethostbyname("host.docker.internal")
+                    raw_proxy = raw_proxy.replace("localhost", "host.docker.internal").replace("127.0.0.1", "host.docker.internal")
+                except Exception:
+                    pass
             add_config(
                 LLMProviderConfig(
                     provider="local_proxy",
-                    base_url=proxy_url.rstrip("/"),
+                    base_url=raw_proxy.rstrip("/"),
                     api_key=getattr(settings, "LOCAL_PROXY_API_KEY", "").strip(),
                     model=getattr(settings, "LOCAL_PROXY_MODEL", "").strip() or getattr(settings, "LLM_MODEL", "qwen2.5-coder:3b"),
                 )
