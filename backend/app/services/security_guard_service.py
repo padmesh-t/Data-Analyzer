@@ -52,7 +52,12 @@ PROHIBITED_DML_DDL_PATTERNS = [
     (r"\b(PG_READ_FILE|PG_WRITE_FILE|PG_LS_DIR)\b", "FILE_OPERATION", "Prohibited server file access function detected."),
     (r"\b(LOAD_FILE|INTO\s+OUTFILE|INTO\s+DUMPFILE)\b", "FILE_INJECTION", "Prohibited file import/export injection detected."),
     (r"\b(COPY\s+[a-zA-Z0-9_\.]+\s+(?:FROM|TO))\b", "FILE_COPY", "Prohibited COPY command detected."),
-    (r"\b(DO\s+\$\$)\b", "ANONYMOUS_BLOCK", "Prohibited anonymous procedural block detected."),
+    # Sensitive Credential Exfiltration Protection
+    (
+        r"(?i)\b(password|password_hash|password_digest|pass_hash|passwd|user_password|user_pass|secret_key|api_key|private_key|auth_token|access_token|refresh_token|client_secret|cvv|credit_card)\b",
+        "SENSITIVE_DATA_EXFILTRATION",
+        "Prohibited access to sensitive credential / password column detected. Exfiltration of authentication secrets is blocked.",
+    ),
 ]
 
 PROMPT_INJECTION_PATTERNS = [
@@ -62,6 +67,22 @@ PROMPT_INJECTION_PATTERNS = [
     (r"(?i)\b(delete\s+from|drop\s+table|drop\s+database|drop\s+schema|truncate\s+table|truncate\s+[a-zA-Z0-9_\.]+|update\s+[a-zA-Z0-9_]+\s+set|alter\s+table|insert\s+into)\b", "PROMPT_INJECTION_SQL_SYNTAX", "Direct destructive SQL command embedded in natural language prompt detected."),
     (r"(?i)\b(grant\s+all|give\s+me\s+superadmin|elevate\s+privilege|bypass\s+security|bypass\s+auth|turn\s+off\s+security)\b", "PROMPT_INJECTION_PRIVILEGE", "Privilege elevation / security bypass attempt detected."),
     (r"(?i)\b(xp_cmdshell|exec\s+xp_|execute\s+shell|run\s+bash|run\s+cmd|eval\(|os\.system|subprocess)\b", "PROMPT_INJECTION_RCE", "Remote code/command execution attempt detected in prompt."),
+    # Sensitive Credential Exfiltration Protection in NLP Prompts
+    (
+        r"(?i)\b(show|give|fetch|get|dump|list|reveal|extract|retrieve|select|display|find|export|steal|leak|tell|what\s+is|what\s+are|print|view|see)\b[\s\S]{1,50}\b(password|passwords|password_hash|password_hashes|password_digest|pass_hash|passwd|pwds|pwd|secret_key|secret_keys|auth_token|auth_tokens|api_key|api_keys|private_key|private_keys|client_secret|access_token|refresh_token|credentials?|social_security|ssn|cvv)\b",
+        "SENSITIVE_DATA_EXFILTRATION",
+        "Prohibited credential / sensitive data access request detected. Exfiltration of authentication secrets is blocked.",
+    ),
+    (
+        r"(?i)\b(password|passwords|password_hash|password_hashes|password_digest|pass_hash|passwd|pwds|pwd|secret_key|secret_keys|auth_token|auth_tokens|api_key|api_keys|private_key|private_keys|client_secret|access_token|refresh_token|credentials?)\b[\s\S]{1,40}\b(of|for|from|in|belonging\s+to|by)\b[\s\S]{1,40}\b(user|users|admin|admins|account|accounts|table|employee|employees|person|people|customer|customers|all|everyone|each|them)\b",
+        "SENSITIVE_DATA_EXFILTRATION",
+        "Prohibited credential / sensitive data access request detected. Exfiltration of authentication secrets is blocked.",
+    ),
+    (
+        r"(?i)\b(user|users|admin|admins|account|accounts|employee|employees|customer|customers|all|everyone)\s+.*?\b(password|passwords|password_hash|password_hashes|pass_hash|passwd|secret_key|secret_keys|auth_token|auth_tokens|api_key|api_keys|private_key|private_keys|credentials?)\b",
+        "SENSITIVE_DATA_EXFILTRATION",
+        "Prohibited credential / sensitive data access request detected. Exfiltration of authentication secrets is blocked.",
+    ),
 ]
 
 

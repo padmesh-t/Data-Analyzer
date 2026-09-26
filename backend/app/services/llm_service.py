@@ -406,7 +406,11 @@ DATABASE CONTEXT AND SCHEMA:
 8. DIALECT COMPLIANCE:
 {dialect_rules}
 
-9. OUTPUT FORMAT:
+10. SENSITIVE CREDENTIAL & PRIVACY POLICY (STRICT):
+   - You must NEVER select, retrieve, filter, or query sensitive authentication columns (such as password, password_hash, passwd, secret, api_key, private_key, auth_token, access_token, refresh_token, pin, cvv, ssn).
+   - If the user's question asks for passwords, credentials, or secrets, DO NOT generate SQL targeting these protected columns.
+
+11. OUTPUT FORMAT:
    - Provide ONLY the single executable {dialect} query enclosed strictly inside a ```sql ... ``` block."""
 
     def _fixup_sql(self, raw: str, dialect: str = "") -> str:

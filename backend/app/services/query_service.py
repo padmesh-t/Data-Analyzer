@@ -65,6 +65,37 @@ def _make_json_safe(val):
         return str(val)
 
 
+def _is_sensitive_column(col_name: str) -> bool:
+    if not col_name:
+        return False
+    c_up = col_name.upper()
+    sensitive_keywords = (
+        "PASSWORD", "PASSWD", "PASS_HASH", "PASSWORD_HASH", "PWD",
+        "SECRET", "SECRET_KEY", "API_KEY", "PRIVATE_KEY", "AUTH_TOKEN",
+        "ACCESS_TOKEN", "REFRESH_TOKEN", "SESSION_TOKEN", "CLIENT_SECRET",
+        "CVV", "PIN_CODE", "CREDIT_CARD", "CARD_NUMBER", "SSN"
+    )
+    return any(k in c_up for k in sensitive_keywords)
+
+
+def _mask_sensitive_data(columns: list[str], rows: list[list]) -> list[list]:
+    if not columns or not rows:
+        return rows
+    sensitive_indices = {i for i, col in enumerate(columns) if _is_sensitive_column(col)}
+    if not sensitive_indices:
+        return rows
+    masked_rows = []
+    for row in rows:
+        masked_row = []
+        for i, val in enumerate(row):
+            if i in sensitive_indices and val is not None:
+                masked_row.append("[PROTECTED_CREDENTIAL]")
+            else:
+                masked_row.append(val)
+        masked_rows.append(masked_row)
+    return masked_rows
+
+
 def _serialize_rows(rows):
     return [[_make_json_safe(cell) for cell in row] for row in rows]
 
@@ -76,9 +107,10 @@ def _db_conn_to_query_response(
 ) -> QueryResponse:
     results = None
     if q.result_columns and q.result_rows:
+        safe_rows = _mask_sensitive_data(q.result_columns, q.result_rows)
         results = QueryResult(
             columns=q.result_columns,
-            rows=q.result_rows,
+            rows=safe_rows,
             row_count=q.row_count,
             execution_time_ms=q.execution_time_ms,
         )
@@ -134,7 +166,8 @@ def _get_schema_context(db_conn: DatabaseConnection) -> tuple[str, dict[str, set
             for c in table.columns:
                 c_name = c.name.upper()
                 all_table_cols[t_name].add(c_name)
-                if c.sample_values:
+                is_sensitive = _is_sensitive_column(c.name)
+                if c.sample_values and not is_sensitive:
                     for sv in c.sample_values:
                         sv_str = str(sv).strip()
                         if len(sv_str) >= 2 and sv_str.lower() not in stop_words:
@@ -155,12 +188,15 @@ def _get_schema_context(db_conn: DatabaseConnection) -> tuple[str, dict[str, set
             for c in table.columns:
                 c_name = c.name.upper()
                 tags = []
+                is_sensitive = _is_sensitive_column(c.name)
+                if is_sensitive:
+                    tags.append("[PROTECTED_SENSITIVE_CREDENTIAL - NEVER QUERY]")
                 if c.is_primary_key:
                     tags.append("[PRIMARY KEY]")
                     pk_map[c_name] = t_name
                 if c.is_foreign_key:
                     tags.append("[FOREIGN KEY]")
-                if c.sample_values:
+                if c.sample_values and not is_sensitive:
                     tags.append(f"[Sample Values: {c.sample_values[:8]}]")
                 tag_str = " " + " ".join(tags) if tags else ""
                 col_lines.append(f"  - {c.name} ({c.data_type}{tag_str})")
