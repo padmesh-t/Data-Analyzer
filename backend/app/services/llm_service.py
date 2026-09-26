@@ -243,7 +243,8 @@ class LLMService:
             resp = client.post("/chat/completions", json=payload, headers=headers)
             resp.raise_for_status()
             data = resp.json()
-            return data["choices"][0]["message"]["content"].strip()
+            msg_content = data["choices"][0]["message"].get("content")
+            return msg_content.strip() if msg_content else None
         except Exception as e:
             logger.warning(f"LLM provider '{config.provider}' ({config.model}) execution failed: {e}")
             cache_key = f"{config.provider}:{config.base_url}"

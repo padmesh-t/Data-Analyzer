@@ -189,7 +189,11 @@ def auto_generate_from_query(
     user_id: int | None = None,
 ) -> Dashboard:
     from app.services.connection_service import get_database, get_connector
-    from app.services.query_service import _serialize_rows
+    from app.services.query_service import (
+        _get_schema_context,
+        _validate_sql_before_execution,
+        _serialize_rows,
+    )
     from app.services.llm_service import llm_service
     from app.api.deps import user_has_permission_by_id
 
@@ -200,19 +204,14 @@ def auto_generate_from_query(
     if not db_conn:
         raise ValueError("Database connection not found")
 
-    # Build schema context so the LLM can generate valid SQL. Bound any DB
-    # network call with a timeout so an unreachable database can't hang the
-    # whole auto-generation request.
-    def _build_schema():
-        connector = get_connector(db_conn)
-        schema = connector.get_schema()
-        lines = [
-            f"Table: {t.name} [{', '.join(f'{c.name} ({c.data_type})' for c in t.columns[:25])}]"
-            for t in schema.tables[:50]
-        ]
-        return "\n".join(lines)
+    def _fetch_schema():
+        return _get_schema_context(db_conn)
 
-    schema_context = _run_with_timeout(_build_schema, 12) or "Schema unavailable"
+    schema_res = _run_with_timeout(_fetch_schema, 12)
+    if schema_res:
+        schema_context, table_cols, schema_metadata = schema_res
+    else:
+        schema_context, table_cols, schema_metadata = "Schema unavailable", {}, {}
 
     # 1) Decompose the request or automatically analyze schema into a set of widget specs.
     specs = _plan_widgets(query_text, schema_context, db_conn.name if db_conn else "")
@@ -240,12 +239,14 @@ def auto_generate_from_query(
     # 3) For each spec: generate SQL, execute read-only, and create a query + widget.
     col = 0
     row = 0
+    dialect = llm_service._get_db_dialect(db_conn.connection_type)
     for spec in specs:
         natural_language = spec["question"]
+        prompt_nl = f"Write a single executable {dialect} query strictly inside a ```sql ... ``` code block to retrieve data for:\n{natural_language}"
         try:
             generated = _run_with_timeout(
                 lambda: llm_service.generate_sql(
-                    natural_language, schema_context, db_conn.connection_type,
+                    prompt_nl, schema_context, db_conn.connection_type,
                 ),
                 12,
             )
@@ -259,6 +260,30 @@ def auto_generate_from_query(
         if not sql or sql.strip() in (";", ""):
             sql = _heuristic_sql(natural_language, schema_context, db_conn.connection_type)
             explanation = "Generated from database schema analysis."
+
+        is_valid, sanitized_sql, val_err = _validate_sql_before_execution(
+            sql, table_cols, dialect, natural_language=natural_language, schema_metadata=schema_metadata
+        )
+        if is_valid:
+            sql = sanitized_sql
+        elif val_err and not val_err.startswith("SECURITY VIOLATION"):
+            try:
+                fixed = _run_with_timeout(
+                    lambda: llm_service.fix_sql(
+                        prompt_nl, sql, val_err, schema_context, db_conn.connection_type,
+                    ),
+                    10,
+                )
+                if fixed:
+                    fixed_sql, fix_explanation, _ = fixed
+                    is_valid_after, sanitized_after, _ = _validate_sql_before_execution(
+                        fixed_sql, table_cols, dialect, natural_language=natural_language, schema_metadata=schema_metadata
+                    )
+                    if is_valid_after:
+                        sql = sanitized_after
+                        explanation = fix_explanation
+            except Exception:
+                pass
 
         status = "completed"
         result_columns = None
@@ -666,8 +691,19 @@ def _heuristic_sql(question: str, schema_context: str, connection_type: str = "p
     if "count" in q or "number of" in q or "no of" in q:
         return f"SELECT COUNT(*) AS count FROM {table}"
 
-    # 5. Top N / Table queries / Default fallback
-    limit_num = 10 if "top 10" in q else 100
+    limit_match = re.search(r"\b(?:top|best|first)\s+(\d+)\b", q)
+    limit_num = int(limit_match.group(1)) if limit_match else (10 if "top 10" in q else 100)
+
+    # 5. Domain specific join heuristics (e.g. restaurant menu & order items)
+    sc_low = schema_context.lower()
+    if any(k in q for k in ("selling", "dish", "dishes", "food", "menu")) and "menu_items" in sc_low and "order_items" in sc_low:
+        if is_sqlserver:
+            return f"SELECT TOP {limit_num} mi.name, SUM(oi.quantity) AS total_sold FROM menu_items mi JOIN order_items oi ON mi.id = oi.menu_item_id GROUP BY mi.id, mi.name ORDER BY total_sold DESC"
+        elif is_oracle:
+            return f"SELECT mi.name, SUM(oi.quantity) AS total_sold FROM menu_items mi JOIN order_items oi ON mi.id = oi.menu_item_id GROUP BY mi.id, mi.name ORDER BY total_sold DESC FETCH FIRST {limit_num} ROWS ONLY"
+        return f"SELECT mi.name, SUM(oi.quantity) AS total_sold FROM menu_items mi JOIN order_items oi ON mi.id = oi.menu_item_id GROUP BY mi.id, mi.name ORDER BY total_sold DESC LIMIT {limit_num}"
+
+    # 6. Top N / Table queries / Default fallback
     if is_sqlserver:
         return f"SELECT TOP {limit_num} * FROM {table}"
     elif is_oracle:

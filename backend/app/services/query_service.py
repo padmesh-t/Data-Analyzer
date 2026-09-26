@@ -106,12 +106,12 @@ def _db_conn_to_query_response(
     security_alert: Optional[SecurityAlert | dict] = None,
 ) -> QueryResponse:
     results = None
-    if q.result_columns and q.result_rows:
+    if q.result_columns is not None and q.result_rows is not None:
         safe_rows = _mask_sensitive_data(q.result_columns, q.result_rows)
         results = QueryResult(
             columns=q.result_columns,
             rows=safe_rows,
-            row_count=q.row_count,
+            row_count=q.row_count or len(safe_rows),
             execution_time_ms=q.execution_time_ms,
         )
     
@@ -260,8 +260,11 @@ def _get_schema_context(db_conn: DatabaseConnection) -> tuple[str, dict[str, set
             )
             lines.append("")
 
+        active_tbls = {t.name.upper(): t for t in sorted_tables if (t.row_count or 0) > 0}
+        if not active_tbls:
+            active_tbls = {t.name.upper(): t for t in sorted_tables}
         schema_metadata = {
-            "active_tables": {t.name.upper(): t for t in sorted_tables if (t.row_count or 0) > 0},
+            "active_tables": active_tbls,
             "all_table_cols": all_table_cols,
             "categorical_map": categorical_map,
             "numeric_cols": numeric_cols,
@@ -289,9 +292,29 @@ def _analyze_intent_and_resolve(natural_language: str, schema_metadata: dict, di
     )
 
     # 2. Ambiguous Question Check
+    is_concrete_ranking_or_sales = any(
+        k in q_lower for k in (
+            "best selling", "best seller", "best-selling", "top selling", "top seller",
+            "top-selling", "most sold", "most selling", "highest selling", "most ordered",
+            "most popular", "bestseller", "bestsellers", "top dish", "top dishes",
+            "top food", "top item", "top items", "top product", "top products",
+            "top customer", "top customers", "top waiter", "top table", "top performer",
+            "top 3", "top 5", "top 10", "best 3", "best 5", "best 10"
+        )
+    )
     ambiguous_keywords = ["best", "greatest", "top performer", "most successful", "worst", "lowest performer"]
-    has_ambiguity = any(re.search(rf"\b{re.escape(k)}\b", q_lower) for k in ambiguous_keywords)
-    metrics_mentioned = [c for t, c in numeric_cols if c.lower() in q_lower or any(syn in q_lower for syn in (c.lower().replace("_", " "), "salary", "revenue", "profit", "budget", "spent", "score", "headcount", "cost", "margin", "amount", "price"))]
+    has_ambiguity = not is_concrete_ranking_or_sales and any(re.search(rf"\b{re.escape(k)}\b", q_lower) for k in ambiguous_keywords)
+    
+    metric_synonyms = (
+        "salary", "revenue", "profit", "budget", "spent", "spending", "score", "headcount",
+        "cost", "margin", "amount", "price", "sales", "sold", "selling", "quantity", "qty",
+        "order", "orders", "ordered", "count", "units", "total", "volume", "dish", "dishes",
+        "food", "item", "items", "product", "products", "popular", "popularity", "rate", "rating"
+    )
+    metrics_mentioned = [
+        c for t, c in numeric_cols
+        if c.lower() in q_lower or any(syn in q_lower for syn in (c.lower().replace("_", " "), *metric_synonyms))
+    ]
     if has_ambiguity and not metrics_mentioned:
         suggs = [f"- `{t}.{c}`" for t, c in numeric_cols[:6]]
         return (
@@ -311,8 +334,9 @@ def _analyze_intent_and_resolve(natural_language: str, schema_metadata: dict, di
 
     # 4. Unrelated Question Check
     if not is_schema_question:
-        all_table_words = {t.lower() for t in active_tables} | {t.lower().rstrip("s") for t in active_tables}
-        for t in active_tables:
+        all_table_names = set(all_table_cols.keys()) | set(active_tables.keys())
+        all_table_words = {t.lower() for t in all_table_names} | {t.lower().rstrip("s") for t in all_table_names}
+        for t in all_table_names:
             for w in t.lower().split("_"):
                 all_table_words.add(w)
 
@@ -323,9 +347,41 @@ def _analyze_intent_and_resolve(natural_language: str, schema_metadata: dict, di
                 for w in c.lower().split("_"):
                     all_col_words.add(w)
 
+        DOMAIN_SYNONYMS = {
+            "dish": ["menu_items", "menu", "item", "items", "food"],
+            "dishes": ["menu_items", "menu", "item", "items", "food"],
+            "food": ["menu_items", "menu", "item", "items"],
+            "meal": ["menu_items", "menu", "item", "items"],
+            "meals": ["menu_items", "menu", "item", "items"],
+            "drink": ["menu_items", "menu", "item", "items"],
+            "drinks": ["menu_items", "menu", "item", "items"],
+            "beverage": ["menu_items", "menu", "item", "items"],
+            "selling": ["sales", "sold", "orders", "order_items", "bills", "order", "quantity"],
+            "seller": ["sales", "sold", "orders", "order_items", "bills", "order"],
+            "sold": ["sales", "orders", "order_items", "bills", "order", "quantity"],
+            "sales": ["bills", "orders", "order_items", "subtotal", "total_amount", "revenue", "amount"],
+            "revenue": ["bills", "subtotal", "total_amount", "amount", "sales"],
+            "staff": ["users", "waiter", "cashier", "cook", "employees"],
+            "waiter": ["users", "orders", "waiter_id"],
+            "cashier": ["users", "bills", "cashier_id"],
+            "customer": ["users", "customers", "clients", "orders"],
+            "client": ["users", "customers", "clients"],
+        }
+
         q_words = set(re.findall(r"\b[a-zA-Z]{3,}\b", q_lower))
-        relevant_matches = (q_words & all_table_words) | (q_words & all_col_words) | {e["value"].lower() for e in matched}
-        common_db_words = {"how", "many", "count", "average", "avg", "total", "sum", "highest", "lowest", "list", "show", "what", "which", "who", "where", "table", "data", "row", "record", "earn", "earns", "cost", "costs", "spend", "spending", "spent", "pay", "paid", "make", "makes", "quarter", "quarterly", "year", "percentage", "pct", "ratio", "more", "less", "than"}
+        syn_matches = {qw for qw in q_words if qw in DOMAIN_SYNONYMS and any(target in all_table_words or target in all_col_words for target in DOMAIN_SYNONYMS[qw])}
+
+        relevant_matches = (q_words & all_table_words) | (q_words & all_col_words) | syn_matches | {e["value"].lower() for e in matched}
+        common_db_words = {
+            "how", "many", "count", "average", "avg", "total", "sum", "highest", "lowest",
+            "list", "show", "what", "which", "who", "where", "table", "data", "row", "record",
+            "earn", "earns", "cost", "costs", "spend", "spending", "spent", "pay", "paid",
+            "make", "makes", "quarter", "quarterly", "year", "percentage", "pct", "ratio",
+            "more", "less", "than", "top", "best", "selling", "sales", "sold", "dish", "dishes",
+            "item", "items", "order", "orders", "ordered", "menu", "product", "products",
+            "customer", "customers", "user", "users", "amount", "quantity", "qty", "volume",
+            "price", "food", "bill", "bills", "transaction", "transactions"
+        }
         has_business_intent = bool(q_words & common_db_words)
 
         if not relevant_matches and not (has_business_intent and (q_words & (all_table_words | all_col_words))):
@@ -379,11 +435,20 @@ def _analyze_intent_and_resolve(natural_language: str, schema_metadata: dict, di
         for tbl, cols in sorted(rel_tables, key=lambda x: len(x[1]), reverse=True)[:5]:
             guidance.append(f"- Table {tbl}: verified columns {', '.join(sorted(cols))}")
 
-    # Entity Identification Guidance
-    if any(w in q_lower for w in ("who", "which employee", "which person", "which worker", "which staff", "employee", "employees", "which project", "which department", "which client", "which customer", "which vendor", "which product", "which car", "which vehicle")):
+    # Best Selling / Top Selling / Popularity Guidance
+    if any(w in q_lower for w in ("selling", "sales", "sold", "dish", "dishes", "menu", "popular", "ordered", "bestseller", "best selling", "top selling")):
         guidance.append(
-            "- ENTITY IDENTIFICATION RULE: When asked 'Which <entity>' (e.g. employee, project, department, client, vendor, vehicle, product), "
-            "you MUST ALWAYS select the entity's primary identifying name/label column in the SELECT clause (e.g. for employees: FIRST_NAME, LAST_NAME or FIRST_NAME || ' ' || LAST_NAME AS FULL_NAME; for projects: PROJECT_NAME; for departments: DEPARTMENT_NAME; for clients: CLIENT_NAME; for vendors: VENDOR_NAME; for products: PRODUCT_NAME; for vehicles: REGISTERATION_NUMBER) "
+            "- TOP SELLING / BEST SELLER RANKING RULE: When asked for 'top selling', 'best selling', 'most sold', or 'most popular' items/dishes/products, "
+            "aggregate sales volume using SUM(quantity) or SUM(subtotal/total_amount) or COUNT(*). "
+            "JOIN the item table (e.g. menu_items, products) to the detail table (e.g. order_items, order_details, bills) on the foreign key (e.g. menu_items.id = order_items.menu_item_id), "
+            "GROUP BY the item ID and name, and ORDER BY the aggregate sales/quantity DESC."
+        )
+
+    # Entity Identification Guidance
+    if any(w in q_lower for w in ("who", "which employee", "which person", "which worker", "which staff", "employee", "employees", "which project", "which department", "which client", "which customer", "which vendor", "which product", "which dish", "which car", "which vehicle")):
+        guidance.append(
+            "- ENTITY IDENTIFICATION RULE: When asked 'Which <entity>' (e.g. employee, project, department, client, vendor, vehicle, product, dish), "
+            "you MUST ALWAYS select the entity's primary identifying name/label column in the SELECT clause (e.g. for employees: FIRST_NAME, LAST_NAME; for dishes/menu items: NAME; for projects: PROJECT_NAME; for departments: DEPARTMENT_NAME; for clients: CLIENT_NAME; for vendors: VENDOR_NAME; for products: PRODUCT_NAME) "
             "along with all requested attributes and metrics so the entity being discussed is explicitly and unmistakably identified."
         )
 
@@ -427,12 +492,14 @@ def _analyze_intent_and_resolve(natural_language: str, schema_metadata: dict, di
             "NEVER use LIMIT 1, TOP 1, FETCH FIRST 1 ROWS, or FETCH FIRST 1 ROWS WITH TIES."
         )
     elif any(w in q_lower for w in ("highest", "lowest", "most", "least", "top", "best", "bottom")) and "summary" not in q_lower:
+        limit_match = re.search(r"\b(?:top|best|first)\s+(\d+)\b", q_lower)
+        lim_n = limit_match.group(1) if limit_match else "1"
         if dialect == "Oracle SQL":
-            guidance.append("- RANKING RULE: For questions asking for the 'highest', 'lowest', 'most', or 'top' single entity overall across the entire dataset, ORDER BY the relevant metric DESC NULLS LAST (or ASC NULLS LAST for lowest) and append 'FETCH FIRST 1 ROWS WITH TIES'.")
+            guidance.append(f"- RANKING RULE: For questions asking for top {lim_n} entities, ORDER BY the relevant metric DESC NULLS LAST (or ASC NULLS LAST for lowest) and append 'FETCH FIRST {lim_n} ROWS ONLY'.")
         elif dialect in ("PostgreSQL", "MySQL", "SQLite"):
-            guidance.append("- RANKING RULE: For questions asking for the 'highest', 'lowest', 'most', or 'top' single entity overall across the entire dataset, ORDER BY the relevant metric (DESC NULLS LAST for highest/most, ASC NULLS LAST for lowest/least) and append 'LIMIT 1'.")
+            guidance.append(f"- RANKING RULE: For questions asking for top {lim_n} entities, ORDER BY the relevant metric (DESC NULLS LAST for highest/most, ASC NULLS LAST for lowest/least) and append 'LIMIT {lim_n}'.")
         elif dialect in ("SQL Server", "T-SQL"):
-            guidance.append("- RANKING RULE: Use 'SELECT TOP 1 WITH TIES' with ORDER BY the relevant metric.")
+            guidance.append(f"- RANKING RULE: Use 'SELECT TOP {lim_n}' with ORDER BY the relevant metric.")
 
     # Time Period & Quarter Integrity Guidance
     if any(w in q_lower for w in ("quarter", "quarters", "q1", "q2", "q3", "q4", "highest revenue", "financial", "revenue", "profit", "expenses")):
