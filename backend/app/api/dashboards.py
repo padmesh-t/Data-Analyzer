@@ -17,7 +17,7 @@ from app.schemas.dashboard import (
     AutoGenerateRequest,
     WidgetConfig,
 )
-from app.services import dashboard_service
+from app.services import dashboard_service, query_service
 
 router = APIRouter(prefix="/dashboards", tags=["dashboards"])
 
@@ -137,16 +137,7 @@ def add_widget(
     dash = _get_owned_dashboard(db, dashboard_id, current_user)
     config = data.config or {}
     if data.query_id and not config.get("sql"):
-        q = (
-            db.query(Query)
-            .filter(Query.id == data.query_id)
-            .filter(
-                Query.user_id == current_user.id
-                if not _manage_all(db, current_user)
-                else True
-            )
-            .first()
-        )
+        q = query_service._get_accessible_query(db, data.query_id, current_user)
         if q and q.generated_sql:
             config["sql"] = q.generated_sql
             config["database_id"] = q.database_id
@@ -186,16 +177,7 @@ def update_widget(
         raise HTTPException(status_code=404, detail="Widget not found")
     config = data.config or {}
     if data.query_id and not config.get("sql"):
-        q = (
-            db.query(Query)
-            .filter(Query.id == data.query_id)
-            .filter(
-                Query.user_id == current_user.id
-                if not _manage_all(db, current_user)
-                else True
-            )
-            .first()
-        )
+        q = query_service._get_accessible_query(db, data.query_id, current_user)
         if q and q.generated_sql:
             config["sql"] = q.generated_sql
             config["database_id"] = q.database_id
@@ -255,6 +237,7 @@ def auto_generate_dashboard(
 ):
     dash = dashboard_service.auto_generate_from_query(
         db, database_id=data.database_id, query_text=data.query_text,
-        user_id=current_user.id,
+        user_id=current_user.id, company_id=current_user.company_id,
     )
     return _dashboard_to_detail(dash)
+

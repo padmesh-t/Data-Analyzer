@@ -41,13 +41,19 @@ def list_dashboards(
     user_id: int | None = None, company_id: int | None = None, include_all: bool = False,
 ) -> tuple[list[Dashboard], int]:
     query = db.query(Dashboard)
-    if company_id is not None:
+    if include_all:
+        pass
+    elif company_id is not None:
         query = query.filter(
             (Dashboard.company_id == company_id)
+            | (Dashboard.is_public == True)
             | ((Dashboard.company_id.is_(None)) & (Dashboard.user_id == user_id))
         )
-    elif user_id is not None and not include_all:
-        query = query.filter(Dashboard.user_id == user_id)
+    elif user_id is not None:
+        query = query.filter(
+            (Dashboard.user_id == user_id)
+            | (Dashboard.is_public == True)
+        )
     total = query.with_entities(func.count(Dashboard.id)).scalar() or 0
     dashboards = (
         query.order_by(Dashboard.updated_at.desc())
@@ -63,13 +69,19 @@ def get_dashboard(
     user_id: int | None = None, company_id: int | None = None, include_all: bool = False,
 ) -> Dashboard | None:
     query = db.query(Dashboard).filter(Dashboard.id == dashboard_id)
-    if company_id is not None:
+    if include_all:
+        pass
+    elif company_id is not None:
         query = query.filter(
             (Dashboard.company_id == company_id)
+            | (Dashboard.is_public == True)
             | ((Dashboard.company_id.is_(None)) & (Dashboard.user_id == user_id))
         )
-    elif user_id is not None and not include_all:
-        query = query.filter(Dashboard.user_id == user_id)
+    elif user_id is not None:
+        query = query.filter(
+            (Dashboard.user_id == user_id)
+            | (Dashboard.is_public == True)
+        )
     return query.first()
 
 
@@ -187,6 +199,7 @@ def auto_generate_from_query(
     query_text: str | None = None,
     template_id: int | None = None,
     user_id: int | None = None,
+    company_id: int | None = None,
 ) -> Dashboard:
     from app.services.connection_service import get_database, get_connector
     from app.services.query_service import (
@@ -197,12 +210,20 @@ def auto_generate_from_query(
     from app.services.llm_service import llm_service
     from app.api.deps import user_has_permission_by_id
 
+    if company_id is None and user_id:
+        from app.models.user import User
+        u = db.query(User).filter(User.id == user_id).first()
+        company_id = u.company_id if u else None
+
     db_conn = get_database(
         db, database_id, user_id=user_id or 0,
         include_all=user_has_permission_by_id(db, user_id or 0, "access.manage"),
     )
     if not db_conn:
         raise ValueError("Database connection not found")
+
+    if company_id is None and hasattr(db_conn, "company_id") and db_conn.company_id:
+        company_id = db_conn.company_id
 
     def _fetch_schema():
         return _get_schema_context(db_conn)
@@ -229,6 +250,7 @@ def auto_generate_from_query(
 
     dash = Dashboard(
         user_id=user_id or 0,
+        company_id=company_id,
         title=title,
         description=desc,
         auto_generated=True,

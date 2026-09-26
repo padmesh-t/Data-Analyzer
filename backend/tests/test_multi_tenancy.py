@@ -247,3 +247,81 @@ class TestMultiTenancyIsolation:
         assert len(logs_b) >= 1
         assert all(log["user_email"] != "audit_admin_a@comp-a.com" for log in logs_b)
         assert any(log["user_email"] == "audit_admin_b@comp-b.com" for log in logs_b)
+
+    def test_auto_generated_dashboard_visible_to_all_roles_in_company(self, client, db_session, permissions):
+        # Create SuperAdmin, Analyst, and Viewer system roles
+        superadmin_role = _make_role(db_session, "SuperAdmin", list(permissions.values()), is_system=True)
+        analyst_role = _make_role(db_session, "Analyst", [
+            permissions["database.read"],
+            permissions["query.read"],
+            permissions["query.execute"],
+            permissions["dashboard.read"],
+            permissions["dashboard.create"],
+        ], is_system=True)
+        viewer_role = _make_role(db_session, "Viewer", [
+            permissions["database.read"],
+            permissions["dashboard.read"],
+        ], is_system=True)
+
+        # 1. Company A & Company B
+        comp_a = Company(name="Auto Corp A")
+        comp_b = Company(name="Auto Corp B")
+        db_session.add_all([comp_a, comp_b])
+        db_session.commit()
+
+        # SuperAdmin in Company A
+        superadmin_a = User(email="super_a@autocorp.com", password_hash="hash", full_name="Super A", company_id=comp_a.id, is_active=True)
+        # Viewer in Company A
+        viewer_a = User(email="viewer_a@autocorp.com", password_hash="hash", full_name="Viewer A", company_id=comp_a.id, is_active=True)
+        # Viewer in Company B
+        viewer_b = User(email="viewer_b@othercorp.com", password_hash="hash", full_name="Viewer B", company_id=comp_b.id, is_active=True)
+
+        db_session.add_all([superadmin_a, viewer_a, viewer_b])
+        db_session.commit()
+
+        db_session.add(UserRole(user_id=superadmin_a.id, role_id=superadmin_role.id))
+        db_session.add(UserRole(user_id=viewer_a.id, role_id=viewer_role.id))
+        db_session.add(UserRole(user_id=viewer_b.id, role_id=viewer_role.id))
+        db_session.commit()
+
+        # Database connection in Company A
+        conn_a = DatabaseConnection(
+            name="Auto DB", connection_type="postgresql", host="localhost",
+            port=5432, database_name="autodb", username="user",
+            password="pass", created_by=superadmin_a.id, company_id=comp_a.id,
+        )
+        db_session.add(conn_a)
+        db_session.commit()
+
+        # SuperAdmin A auto-generates a dashboard
+        from app.services.dashboard_service import auto_generate_from_query
+        dash = auto_generate_from_query(
+            db_session,
+            database_id=conn_a.id,
+            query_text="Sales overview",
+            user_id=superadmin_a.id,
+            company_id=superadmin_a.company_id,
+        )
+
+        assert dash.company_id == comp_a.id
+        assert dash.auto_generated is True
+
+        # Viewer A in Company A lists dashboards -> MUST see the auto-generated dashboard
+        headers_viewer_a = auth_headers(viewer_a)
+        list_resp_a = client.get("/api/v1/dashboards", headers=headers_viewer_a)
+        assert list_resp_a.status_code == 200
+        dashboards_a = list_resp_a.json()["dashboards"]
+        assert any(d["id"] == dash.id for d in dashboards_a)
+
+        # Viewer A gets dashboard detail
+        get_resp_a = client.get(f"/api/v1/dashboards/{dash.id}", headers=headers_viewer_a)
+        assert get_resp_a.status_code == 200
+        assert get_resp_a.json()["id"] == dash.id
+
+        # Viewer B in Company B lists dashboards -> MUST NOT see Company A's auto-generated dashboard
+        headers_viewer_b = auth_headers(viewer_b)
+        list_resp_b = client.get("/api/v1/dashboards", headers=headers_viewer_b)
+        assert list_resp_b.status_code == 200
+        dashboards_b = list_resp_b.json()["dashboards"]
+        assert not any(d["id"] == dash.id for d in dashboards_b)
+
