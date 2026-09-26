@@ -25,6 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { VisualizationRenderer } from "@/components/visualization/visualization-renderer"
 import { useDashboardWs, type LiveWidgetData } from "@/hooks/use-dashboard-ws"
+import { useAuthStore } from "@/store/auth-store"
 import { formatDate } from "@/lib/utils"
 import type {
   WidgetResponse, DashboardDetailResponse, QueryResponse,
@@ -51,6 +52,25 @@ export default function DashboardDetailPage() {
   const router = useRouter()
   const { toast } = useToast()
   const dashboardId = Number(params.id)
+  const { user } = useAuthStore()
+
+  const canUpdateDashboard = useMemo(() => {
+    if (!user) return false
+    const allPermissions = new Set(user.roles?.flatMap((r) => r.permissions?.map((p) => p.name) || []) || [])
+    return allPermissions.has("dashboard.update") || allPermissions.has("access.manage")
+  }, [user])
+
+  const canDeleteDashboard = useMemo(() => {
+    if (!user) return false
+    const allPermissions = new Set(user.roles?.flatMap((r) => r.permissions?.map((p) => p.name) || []) || [])
+    return allPermissions.has("dashboard.delete") || allPermissions.has("access.manage")
+  }, [user])
+
+  const canCreateWidget = useMemo(() => {
+    if (!user) return false
+    const allPermissions = new Set(user.roles?.flatMap((r) => r.permissions?.map((p) => p.name) || []) || [])
+    return allPermissions.has("dashboard.create") || allPermissions.has("dashboard.update") || allPermissions.has("access.manage")
+  }, [user])
 
   const [dash, setDash] = useState<DashboardDetailResponse | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -140,6 +160,14 @@ export default function DashboardDetailPage() {
       setTitle(data.title)
       setDescription(data.description || "")
       setIsPublic(data.is_public)
+      const initialLayout = data.widgets.map((w) => ({
+        id: w.id,
+        position_x: w.position_x,
+        position_y: w.position_y,
+        width: w.width,
+        height: w.height,
+      }))
+      lastSavedLayoutRef.current = JSON.stringify(initialLayout)
     } catch {
       toast({ title: "Error", description: "Failed to load dashboard", variant: "destructive" })
     } finally {
@@ -161,7 +189,7 @@ export default function DashboardDetailPage() {
   }, [dash])
 
   const handleLayoutChange = useCallback((newLayout: Layout) => {
-    if (!dash) return
+    if (!dash || !canUpdateDashboard) return
     if (layoutTimerRef.current) clearTimeout(layoutTimerRef.current)
     const widgets = newLayout.map((item) => ({
       id: Number(item.i),
@@ -197,7 +225,7 @@ export default function DashboardDetailPage() {
         setLayoutUpdating(false)
       }
     }, 500)
-  }, [dash, dashboardId, toast])
+  }, [dash, canUpdateDashboard, dashboardId, toast])
 
   const handleSaveDetails = async () => {
     if (!title.trim()) return
@@ -384,12 +412,16 @@ export default function DashboardDetailPage() {
               <RefreshCw className="mr-1 h-4 w-4" /> Refresh All
             </Button>
           )}
-          <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
-            <Settings className="mr-1 h-4 w-4" /> Edit
-          </Button>
-          <Button size="sm" onClick={() => setAddWidgetOpen(true)}>
-            <Plus className="mr-1 h-4 w-4" /> Add Widget
-          </Button>
+          {canUpdateDashboard && (
+            <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+              <Settings className="mr-1 h-4 w-4" /> Edit
+            </Button>
+          )}
+          {canCreateWidget && (
+            <Button size="sm" onClick={() => setAddWidgetOpen(true)}>
+              <Plus className="mr-1 h-4 w-4" /> Add Widget
+            </Button>
+          )}
         </div>
       </div>
 
@@ -417,9 +449,11 @@ export default function DashboardDetailPage() {
             <LayoutDashboard className="h-12 w-12 text-muted-foreground mb-4" />
             <p className="text-lg font-medium">No widgets yet</p>
             <p className="text-muted-foreground mb-4">Add a widget to start building your dashboard</p>
-            <Button onClick={() => setAddWidgetOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" /> Add Widget
-            </Button>
+            {canCreateWidget && (
+              <Button onClick={() => setAddWidgetOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" /> Add Widget
+              </Button>
+            )}
           </CardContent>
         </Card>
       ) : (
@@ -434,18 +468,20 @@ export default function DashboardDetailPage() {
             layout={layout}
             width={1200}
             gridConfig={{ cols: 12, rowHeight: 80 }}
-            dragConfig={{ handle: ".drag-handle", enabled: true }}
-            resizeConfig={{ enabled: true }}
+            dragConfig={{ handle: ".drag-handle", enabled: canUpdateDashboard }}
+            resizeConfig={{ enabled: canUpdateDashboard }}
             compactor={verticalCompactor}
-            onLayoutChange={handleLayoutChange}
+            onLayoutChange={canUpdateDashboard ? handleLayoutChange : undefined}
           >
             {dash.widgets.map((widget) => (
               <Card key={widget.id} className="overflow-hidden flex flex-col h-full">
                 <CardHeader className="flex flex-row items-center justify-between py-2 px-4 shrink-0">
                   <div className="flex items-center gap-2">
-                    <div className="drag-handle cursor-grab active:cursor-grabbing">
-                      <GripVertical className="h-4 w-4 text-muted-foreground" />
-                    </div>
+                    {canUpdateDashboard && (
+                      <div className="drag-handle cursor-grab active:cursor-grabbing">
+                        <GripVertical className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                    )}
                     <CardTitle className="text-sm font-medium">{widget.title}</CardTitle>
                     <WidgetTypeBadge type={widget.widget_type} />
                     {activePollers.includes(widget.id) && connected && (
@@ -471,22 +507,26 @@ export default function DashboardDetailPage() {
                     >
                       <RefreshCw className="h-3 w-3" />
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6"
-                      onClick={() => { setEditingWidget(widget); setEditWidgetOpen(true) }}
-                    >
-                      <Pencil className="h-3 w-3" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6"
-                      onClick={() => setDeleteWidgetId(widget.id)}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
+                    {canUpdateDashboard && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6"
+                        onClick={() => { setEditingWidget(widget); setEditWidgetOpen(true) }}
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </Button>
+                    )}
+                    {canDeleteDashboard && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6"
+                        onClick={() => setDeleteWidgetId(widget.id)}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    )}
                   </div>
                 </CardHeader>
                 <CardContent className="p-4 pt-0 flex-1 min-h-0 overflow-hidden flex flex-col" style={{ height: `calc(100% - 40px)` }}>

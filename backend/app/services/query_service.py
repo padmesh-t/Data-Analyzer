@@ -31,7 +31,7 @@ from app.config import settings
 from app.utils.error_messages import friendly_error
 
 
-def _user_has_manage_permission(db: Session, user_id: int) -> bool:
+def _user_has_permission(db: Session, user_id: int, permission_name: str) -> bool:
     try:
         from app.models.user import UserRole
         from app.models.role import RolePermission
@@ -44,13 +44,17 @@ def _user_has_manage_permission(db: Session, user_id: int) -> bool:
             .join(Permission, RolePermission.permission_id == Permission.id)
             .filter(
                 RolePermission.role_id.in_(role_ids),
-                Permission.name == "access.manage",
+                Permission.name.in_([permission_name, "access.manage"]),
             )
             .first()
         )
         return perm is not None
     except Exception:
-        return True
+        return False
+
+
+def _user_has_manage_permission(db: Session, user_id: int) -> bool:
+    return _user_has_permission(db, user_id, "access.manage")
 
 
 def _make_json_safe(val):
@@ -1411,15 +1415,100 @@ def follow_up_query(
     return result
 
 
+def _get_accessible_query(db: Session, query_id: int, current_user: User | int | None) -> Query | None:
+    from app.models.dashboard import Dashboard, DashboardWidget
+    if isinstance(current_user, User):
+        user = current_user
+        user_id = user.id
+    elif isinstance(current_user, int):
+        user = db.query(User).filter(User.id == current_user).first()
+        user_id = current_user
+    else:
+        user = None
+        user_id = 0
+
+    company_id = user.company_id if user else None
+    manage_all = _user_has_permission(db, user_id, "access.manage") if user_id else False
+    has_query_read = _user_has_permission(db, user_id, "query.read") if user_id else False
+
+    q_query = db.query(Query).filter(Query.id == query_id)
+    if manage_all:
+        q = q_query.first()
+        if q:
+            return q
+    elif has_query_read:
+        if company_id is not None:
+            q = q_query.filter(
+                (Query.company_id == company_id)
+                | ((Query.company_id.is_(None)) & (Query.user_id == user_id))
+                | (Query.user_id == user_id)
+            ).first()
+        else:
+            q = q_query.filter(Query.user_id == user_id).first()
+        if q:
+            return q
+    else:
+        q = q_query.filter(Query.user_id == user_id).first()
+        if q:
+            return q
+
+    # Check if query is referenced by a widget on a dashboard accessible to this user
+    widget_q = (
+        db.query(DashboardWidget)
+        .join(Dashboard, DashboardWidget.dashboard_id == Dashboard.id)
+        .filter(DashboardWidget.query_id == query_id)
+    )
+    if manage_all:
+        pass
+    elif company_id is not None:
+        widget_q = widget_q.filter(
+            (Dashboard.company_id == company_id)
+            | (Dashboard.is_public == True)
+            | (Dashboard.user_id == user_id)
+        )
+    else:
+        widget_q = widget_q.filter(
+            (Dashboard.user_id == user_id) | (Dashboard.is_public == True)
+        )
+
+    if widget_q.first():
+        return db.query(Query).filter(Query.id == query_id).first()
+
+    return None
+
+
 def list_queries(
     db: Session,
-    user_id: int,
+    current_user: User | int,
     page: int = 1,
     per_page: int = 20,
     database_id: Optional[int] = None,
     status: Optional[str] = None,
 ) -> tuple[list[QueryResponse], int, int]:
-    query = db.query(Query).filter(Query.user_id == user_id)
+    if isinstance(current_user, User):
+        user = current_user
+        user_id = user.id
+    elif isinstance(current_user, int):
+        user = db.query(User).filter(User.id == current_user).first()
+        user_id = current_user
+    else:
+        user = None
+        user_id = 0
+
+    company_id = user.company_id if user else None
+    manage_all = _user_has_manage_permission(db, user_id) if user_id else False
+
+    query = db.query(Query)
+    if manage_all:
+        pass
+    elif company_id is not None:
+        query = query.filter(
+            (Query.company_id == company_id)
+            | ((Query.company_id.is_(None)) & (Query.user_id == user_id))
+            | (Query.user_id == user_id)
+        )
+    else:
+        query = query.filter(Query.user_id == user_id)
 
     if database_id:
         query = query.filter(Query.database_id == database_id)
@@ -1440,8 +1529,8 @@ def list_queries(
     return responses, total, pages
 
 
-def get_query(db: Session, query_id: int, user_id: int) -> QueryResponse:
-    q = db.query(Query).filter(Query.id == query_id, Query.user_id == user_id).first()
+def get_query(db: Session, query_id: int, current_user: User | int) -> QueryResponse:
+    q = _get_accessible_query(db, query_id, current_user)
     if not q:
         raise HTTPException(status_code=404, detail="Query not found")
     result = _db_conn_to_query_response(q)
@@ -1449,8 +1538,8 @@ def get_query(db: Session, query_id: int, user_id: int) -> QueryResponse:
     return result
 
 
-def cancel_query(db: Session, query_id: int, user_id: int) -> bool:
-    q = db.query(Query).filter(Query.id == query_id, Query.user_id == user_id).first()
+def cancel_query(db: Session, query_id: int, current_user: User | int) -> bool:
+    q = _get_accessible_query(db, query_id, current_user)
     if not q:
         raise HTTPException(status_code=404, detail="Query not found")
     if q.status in ("pending", "executing"):
@@ -1460,8 +1549,8 @@ def cancel_query(db: Session, query_id: int, user_id: int) -> bool:
     return False
 
 
-def explain_query(db: Session, query_id: int, user_id: int) -> ExplainResponse:
-    q = db.query(Query).filter(Query.id == query_id, Query.user_id == user_id).first()
+def explain_query(db: Session, query_id: int, current_user: User | int) -> ExplainResponse:
+    q = _get_accessible_query(db, query_id, current_user)
     if not q:
         raise HTTPException(status_code=404, detail="Query not found")
     sql = q.generated_sql or ""
@@ -1469,8 +1558,8 @@ def explain_query(db: Session, query_id: int, user_id: int) -> ExplainResponse:
     return ExplainResponse(explanation=explanation, generated_sql=sql)
 
 
-def optimize_query(db: Session, query_id: int, user_id: int) -> OptimizeResponse:
-    q = db.query(Query).filter(Query.id == query_id, Query.user_id == user_id).first()
+def optimize_query(db: Session, query_id: int, current_user: User | int) -> OptimizeResponse:
+    q = _get_accessible_query(db, query_id, current_user)
     if not q:
         raise HTTPException(status_code=404, detail="Query not found")
     sql = q.generated_sql or ""
@@ -1480,8 +1569,8 @@ def optimize_query(db: Session, query_id: int, user_id: int) -> OptimizeResponse
     )
 
 
-def visualize_query(db: Session, query_id: int, user_id: int) -> VisualizeResponse:
-    q = db.query(Query).filter(Query.id == query_id, Query.user_id == user_id).first()
+def visualize_query(db: Session, query_id: int, current_user: User | int) -> VisualizeResponse:
+    q = _get_accessible_query(db, query_id, current_user)
     if not q:
         raise HTTPException(status_code=404, detail="Query not found")
     columns = q.result_columns or []
@@ -1491,13 +1580,33 @@ def visualize_query(db: Session, query_id: int, user_id: int) -> VisualizeRespon
     )
 
 
-def get_suggestions(db: Session, user_id: int, q: str) -> list[str]:
+def get_suggestions(db: Session, current_user: User | int, q: str) -> list[str]:
+    if isinstance(current_user, User):
+        user = current_user
+        user_id = user.id
+    elif isinstance(current_user, int):
+        user = db.query(User).filter(User.id == current_user).first()
+        user_id = current_user
+    else:
+        user = None
+        user_id = 0
+
+    company_id = user.company_id if user else None
+    manage_all = _user_has_manage_permission(db, user_id) if user_id else False
+
     like = f"{q}%"
-    queries = db.query(Query.natural_language).filter(
-        Query.user_id == user_id,
+    query = db.query(Query.natural_language).filter(
         Query.natural_language.ilike(like),
         Query.status == "completed",
-    ).distinct().limit(8).all()
+    )
+    if manage_all:
+        pass
+    elif company_id is not None:
+        query = query.filter((Query.company_id == company_id) | (Query.user_id == user_id))
+    else:
+        query = query.filter(Query.user_id == user_id)
+
+    queries = query.distinct().limit(8).all()
     results = [row[0] for row in queries]
     template_q = db.query(QueryTemplate.natural_language).filter(
         QueryTemplate.user_id == user_id,

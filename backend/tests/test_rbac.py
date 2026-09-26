@@ -234,3 +234,100 @@ class TestUserSelfProtection:
         assert "Role updated to" in r.json()["message"]
 
 
+class TestQueryAccessRBAC:
+    def test_analyst_can_access_query_in_same_company(self, client, db_session, admin, analyst, owned_connection):
+        from app.models.query import Query
+        from app.models.company import Company
+        
+        company = Company(name="Acme Corp")
+        db_session.add(company)
+        db_session.commit()
+        
+        admin.company_id = company.id
+        analyst.company_id = company.id
+        db_session.commit()
+        
+        q = Query(
+            user_id=admin.id,
+            company_id=company.id,
+            database_id=owned_connection.id,
+            natural_language="Total sales",
+            generated_sql="SELECT sum(amount) FROM sales;",
+            status="completed",
+            result_columns=["total"],
+            result_rows=[[1000]],
+            row_count=1,
+        )
+        db_session.add(q)
+        db_session.commit()
+        
+        r = client.get(f"/api/v1/queries/{q.id}", headers=auth_headers(analyst))
+        assert r.status_code == 200
+        assert r.json()["id"] == q.id
+        assert r.json()["results"]["rows"] == [[1000]]
+
+    def test_viewer_can_access_query_attached_to_dashboard_widget(self, client, db_session, admin, viewer, owned_connection):
+        from app.models.query import Query
+        from app.models.dashboard import Dashboard, DashboardWidget
+        
+        q = Query(
+            user_id=admin.id,
+            database_id=owned_connection.id,
+            natural_language="User signups",
+            generated_sql="SELECT count(*) FROM users;",
+            status="completed",
+            result_columns=["count"],
+            result_rows=[[42]],
+            row_count=1,
+        )
+        db_session.add(q)
+        db_session.commit()
+        
+        dash = Dashboard(
+            title="Public Metrics",
+            user_id=admin.id,
+            is_public=True,
+        )
+        db_session.add(dash)
+        db_session.commit()
+        
+        widget = DashboardWidget(
+            dashboard_id=dash.id,
+            query_id=q.id,
+            title="Signups Widget",
+            widget_type="kpi",
+            position_x=0,
+            position_y=0,
+            width=6,
+            height=4,
+            config={},
+        )
+        db_session.add(widget)
+        db_session.commit()
+        
+        r = client.get(f"/api/v1/queries/{q.id}", headers=auth_headers(viewer))
+        assert r.status_code == 200
+        assert r.json()["id"] == q.id
+        assert r.json()["results"]["rows"] == [[42]]
+
+    def test_viewer_denied_access_to_unrelated_private_query(self, client, db_session, admin, viewer, owned_connection):
+        from app.models.query import Query
+        
+        q = Query(
+            user_id=admin.id,
+            database_id=owned_connection.id,
+            natural_language="Secret Admin Query",
+            generated_sql="SELECT * FROM secrets;",
+            status="completed",
+            result_columns=["secret"],
+            result_rows=[["classified"]],
+            row_count=1,
+        )
+        db_session.add(q)
+        db_session.commit()
+        
+        r = client.get(f"/api/v1/queries/{q.id}", headers=auth_headers(viewer))
+        assert r.status_code == 404
+
+
+

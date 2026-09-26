@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.api.deps import require_permission
+from app.api.deps import require_permission, require_any_permission
 from app.models.user import User
 from app.schemas.query import (
     QueryRequest, SQLExecutionRequest, FollowUpRequest,
@@ -26,7 +26,7 @@ def list_queries(
     db: Session = Depends(get_db),
 ):
     queries, total, pages = query_service.list_queries(
-        db, current_user.id, page, per_page, database_id, status,
+        db, current_user, page, per_page, database_id, status,
     )
     return QueryListResponse(queries=queries, total=total, page=page, per_page=per_page, pages=pages)
 
@@ -51,16 +51,16 @@ def query_suggestions(
     current_user: User = Depends(require_permission("query.read")),
     db: Session = Depends(get_db),
 ):
-    return query_service.get_suggestions(db, current_user.id, q)
+    return query_service.get_suggestions(db, current_user, q)
 
 
 @router.get("/{query_id}", response_model=QueryResponse)
 def get_query(
     query_id: int,
-    current_user: User = Depends(require_permission("query.read")),
+    current_user: User = Depends(require_any_permission("query.read", "dashboard.read", "access.manage")),
     db: Session = Depends(get_db),
 ):
-    return query_service.get_query(db, query_id, current_user.id)
+    return query_service.get_query(db, query_id, current_user)
 
 
 @router.post("/sql", response_model=QueryResponse)
@@ -83,7 +83,7 @@ def cancel_query(
     current_user: User = Depends(require_permission("query.execute")),
     db: Session = Depends(get_db),
 ):
-    cancelled = query_service.cancel_query(db, query_id, current_user.id)
+    cancelled = query_service.cancel_query(db, query_id, current_user)
     if not cancelled:
         raise HTTPException(status_code=400, detail="Query cannot be cancelled in its current state")
     create_audit_log(db, current_user.id, "cancel", "query", query_id)
@@ -111,7 +111,7 @@ def explain_query(
     current_user: User = Depends(require_permission("query.read")),
     db: Session = Depends(get_db),
 ):
-    return query_service.explain_query(db, query_id, current_user.id)
+    return query_service.explain_query(db, query_id, current_user)
 
 
 @router.post("/{query_id}/optimize", response_model=OptimizeResponse)
@@ -120,7 +120,7 @@ def optimize_query(
     current_user: User = Depends(require_permission("query.read")),
     db: Session = Depends(get_db),
 ):
-    return query_service.optimize_query(db, query_id, current_user.id)
+    return query_service.optimize_query(db, query_id, current_user)
 
 
 @router.post("/{query_id}/visualize", response_model=VisualizeResponse)
@@ -129,7 +129,7 @@ def visualize_query(
     current_user: User = Depends(require_permission("query.read")),
     db: Session = Depends(get_db),
 ):
-    return query_service.visualize_query(db, query_id, current_user.id)
+    return query_service.visualize_query(db, query_id, current_user)
 
 
 @router.post("/{query_id}/favorite", response_model=MessageResponse)
@@ -138,7 +138,7 @@ def favorite_query(
     current_user: User = Depends(require_permission("query.read")),
     db: Session = Depends(get_db),
 ):
-    query = query_service.get_query(db, query_id, current_user.id)
+    query = query_service.get_query(db, query_id, current_user)
     if not query:
         raise HTTPException(status_code=404, detail="Query not found")
     create_audit_log(db, current_user.id, "favorite", "query", query_id)
@@ -155,7 +155,7 @@ def delete_query(
     q = db.query(QueryModel).filter(QueryModel.id == query_id).first()
     if not q:
         raise HTTPException(status_code=404, detail="Query not found")
-    if q.user_id != current_user.id:
+    if q.user_id != current_user.id and not _user_has_manage_permission(db, current_user.id):
         raise HTTPException(status_code=404, detail="Query not found")
     db.delete(q)
     db.commit()
@@ -169,9 +169,10 @@ def export_query(
     current_user: User = Depends(require_permission("query.read")),
     db: Session = Depends(get_db),
 ):
-    query = query_service.get_query(db, query_id, current_user.id)
+    query = query_service.get_query(db, query_id, current_user)
     if not query:
         raise HTTPException(status_code=404, detail="Query not found")
     create_audit_log(db, current_user.id, "export", "query", query_id)
+    return query
     return query
 

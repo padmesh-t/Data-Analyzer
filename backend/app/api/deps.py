@@ -97,6 +97,24 @@ def require_permission(permission: str):
     return _dep
 
 
+def require_any_permission(*permissions: str):
+    """Dependency factory: 403 unless the current user holds at least one of the permissions."""
+
+    def _dep(
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> User:
+        if not any(user_has_permission(db, current_user, perm) for perm in permissions):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions",
+            )
+        return current_user
+
+    return _dep
+
+
+
 def is_user_superadmin(db: Session, user: User) -> bool:
     """Return True if the user holds the SuperAdmin role or is the owner of their company."""
     if not user:
