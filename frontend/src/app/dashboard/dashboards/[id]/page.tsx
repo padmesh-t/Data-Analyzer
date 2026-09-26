@@ -535,7 +535,7 @@ export default function DashboardDetailPage() {
                     )}
                   </div>
                 </CardHeader>
-                <CardContent className="p-4 pt-0 flex-1 min-h-0 overflow-hidden flex flex-col" style={{ height: `calc(100% - 40px)` }}>
+                <CardContent className="p-3 pt-0 flex-1 min-h-0 overflow-y-auto overflow-x-hidden flex flex-col custom-scrollbar" style={{ height: `calc(100% - 40px)` }}>
                   <WidgetContent
                     widget={widget}
                     liveData={liveData.get(widget.id)}
@@ -790,8 +790,8 @@ function WidgetChartRenderer({
   }, [widget, suggestions, results])
 
   return (
-    <div className="w-full h-full min-h-0 flex-1 flex flex-col overflow-hidden">
-      <VisualizationRenderer results={results} suggestions={[targetSuggestion]} />
+    <div className="w-full h-full min-h-0 flex-1 flex flex-col">
+      <VisualizationRenderer results={results} suggestions={[targetSuggestion]} compact={true} />
     </div>
   )
 }

@@ -288,24 +288,24 @@ function PieChartView({ results, config }: { results: QueryResult; config?: Reco
   }
 
   return (
-    <div className="w-full h-[280px] min-h-[260px] flex flex-col items-center justify-center">
-      <ResponsiveContainer width="100%" height={260} minHeight={240}>
-        <PieChart margin={{ top: 10, right: 10, bottom: 10, left: 10 }}>
+    <div className="w-full h-full min-h-[250px] flex flex-col items-center justify-center">
+      <ResponsiveContainer width="100%" height={260} minHeight={230}>
+        <PieChart margin={{ top: 22, right: 22, bottom: 12, left: 22 }}>
           <Pie
             data={pieData}
             dataKey={value}
             nameKey={label}
             cx="50%"
-            cy="45%"
-            outerRadius={85}
-            innerRadius={30}
+            cy="46%"
+            outerRadius={65}
+            innerRadius={28}
             paddingAngle={pieData.length > 1 ? 2 : 0}
             label={({ name, percent }: { name?: string; percent?: number }) => {
               const p = percent != null && !isNaN(percent) ? `${(percent * 100).toFixed(0)}%` : ""
-              const n = name ? (name.length > 12 ? `${name.slice(0, 10)}...` : name) : ""
+              const n = name ? (name.length > 13 ? `${name.slice(0, 11)}…` : name) : ""
               return n && p ? `${n}: ${p}` : n || p
             }}
-            labelLine={true}
+            labelLine={{ strokeWidth: 1 }}
           >
             {pieData.map((_, i) => (
               <Cell key={`pie-cell-${i}`} fill={getColor(i)} stroke="#ffffff" strokeWidth={1.5} />
@@ -324,8 +324,8 @@ function PieChartView({ results, config }: { results: QueryResult; config?: Reco
           />
           <Legend
             verticalAlign="bottom"
-            height={32}
-            wrapperStyle={{ fontSize: "11px", paddingTop: "6px" }}
+            height={36}
+            wrapperStyle={{ fontSize: "11px", paddingTop: "4px" }}
           />
         </PieChart>
       </ResponsiveContainer>
@@ -488,9 +488,11 @@ function TableView({ results }: { results: QueryResult }) {
 export function VisualizationRenderer({
   results,
   suggestions,
+  compact = false,
 }: {
   results: QueryResult
   suggestions?: VisualizationSuggestion[]
+  compact?: boolean
 }) {
   const [isMounted, setIsMounted] = useState(false)
 
@@ -510,71 +512,47 @@ export function VisualizationRenderer({
     return <TableView results={results} />
   }
 
+  const renderContent = (v: VisualizationSuggestion) => {
+    const config = v.config || {}
+    switch (v.type) {
+      case "bar_chart":
+        return <BarChartView results={results} config={config} />
+      case "pie_chart":
+        return <PieChartView results={results} config={config} />
+      case "line_chart":
+        return <LineChartView results={results} config={config} />
+      case "area_chart":
+        return <AreaChartView results={results} config={config} />
+      case "kpi":
+        return <KpiView results={results} />
+      case "table":
+      default:
+        return <TableView results={results} />
+    }
+  }
+
+  if (compact) {
+    return (
+      <div className="w-full h-full min-h-0 flex flex-col">
+        {suggestions.map((v, i) => (
+          <div key={i} className="w-full h-full min-h-0 flex-1 flex flex-col">
+            {renderContent(v)}
+          </div>
+        ))}
+      </div>
+    )
+  }
+
   return (
     <div className="w-full flex flex-col space-y-4">
-      {suggestions.map((v, i) => {
-        const config = v.config || {}
-        switch (v.type) {
-          case "bar_chart":
-            return (
-              <div key={i} className="w-full rounded-xl border bg-card/60 p-4 shadow-xs flex flex-col">
-                {v.title && <p className="mb-3 text-sm font-semibold text-foreground">{v.title}</p>}
-                <div className="w-full min-h-[260px]">
-                  <BarChartView results={results} config={config} />
-                </div>
-              </div>
-            )
-          case "pie_chart":
-            return (
-              <div key={i} className="w-full rounded-xl border bg-card/60 p-4 shadow-xs flex flex-col">
-                {v.title && <p className="mb-3 text-sm font-semibold text-foreground">{v.title}</p>}
-                <div className="w-full min-h-[260px]">
-                  <PieChartView results={results} config={config} />
-                </div>
-              </div>
-            )
-          case "line_chart":
-            return (
-              <div key={i} className="w-full rounded-xl border bg-card/60 p-4 shadow-xs flex flex-col">
-                {v.title && <p className="mb-3 text-sm font-semibold text-foreground">{v.title}</p>}
-                <div className="w-full min-h-[260px]">
-                  <LineChartView results={results} config={config} />
-                </div>
-              </div>
-            )
-          case "area_chart":
-            return (
-              <div key={i} className="w-full rounded-xl border bg-card/60 p-4 shadow-xs flex flex-col">
-                {v.title && <p className="mb-3 text-sm font-semibold text-foreground">{v.title}</p>}
-                <div className="w-full min-h-[260px]">
-                  <AreaChartView results={results} config={config} />
-                </div>
-              </div>
-            )
-          case "kpi":
-            return (
-              <div key={i} className="w-full rounded-xl border bg-card/60 p-4 shadow-xs flex flex-col justify-center">
-                {v.title && <p className="mb-1 text-sm font-semibold text-foreground">{v.title}</p>}
-                <KpiView results={results} />
-              </div>
-            )
-          case "table":
-            return (
-              <div key={i} className="w-full rounded-xl border bg-card/60 p-4 shadow-xs flex flex-col overflow-hidden">
-                {v.title && <p className="mb-3 text-sm font-semibold text-foreground">{v.title}</p>}
-                <div className="w-full overflow-hidden">
-                  <TableView results={results} />
-                </div>
-              </div>
-            )
-          default:
-            return (
-              <div key={i} className="w-full rounded-xl border bg-card/60 p-4 shadow-xs flex flex-col overflow-hidden">
-                <TableView results={results} />
-              </div>
-            )
-        }
-      })}
+      {suggestions.map((v, i) => (
+        <div key={i} className="w-full rounded-xl border bg-card/60 p-4 shadow-xs flex flex-col">
+          {v.title && <p className="mb-3 text-sm font-semibold text-foreground">{v.title}</p>}
+          <div className="w-full min-h-[260px]">
+            {renderContent(v)}
+          </div>
+        </div>
+      ))}
     </div>
   )
 }
